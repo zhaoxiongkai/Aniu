@@ -78,6 +78,60 @@ test('buildPayload preserves disabled session schedules', () => {
   assert.equal(morningRuns.every((item) => item.enabled === false), true)
 })
 
+test('buildPayload creates ETF trade schedules with fixed investment prompt', () => {
+  const { scheduleSettings, buildPayload } = useScheduleForm()
+
+  scheduleSettings.etfMorning.enabled = true
+  scheduleSettings.etfMorning.runCount = 3
+
+  const payload = buildPayload([])
+  const etfRuns = payload.filter((item) => item.name.startsWith('ETF上午运行'))
+
+  assert.equal(etfRuns.length, 3)
+  assert.equal(etfRuns.every((item) => item.run_type === 'trade'), true)
+  assert.equal(etfRuns.every((item) => item.task_prompt.includes('单次ETF可投资金额上限1000元')), true)
+})
+
+test('syncFromSchedules keeps stock and ETF session schedules separate', () => {
+  const { scheduleSettings, syncFromSchedules } = useScheduleForm()
+
+  syncFromSchedules([
+    {
+      id: 21,
+      name: '上午运行1号',
+      run_type: 'trade',
+      cron_expression: '0 10 * * 1-5',
+      task_prompt: 'stock',
+      timeout_seconds: 1800,
+      enabled: true,
+    },
+    {
+      id: 31,
+      name: 'ETF上午运行1号',
+      run_type: 'trade',
+      cron_expression: '30 10 * * 1-5',
+      task_prompt: 'etf',
+      timeout_seconds: 1800,
+      enabled: false,
+    },
+    {
+      id: 32,
+      name: 'ETF上午运行2号',
+      run_type: 'trade',
+      cron_expression: '0 11 * * 1-5',
+      task_prompt: 'etf',
+      timeout_seconds: 1800,
+      enabled: false,
+    },
+  ])
+
+  assert.equal(scheduleSettings.morning.runCount, 1)
+  assert.equal(scheduleSettings.morning.prompt, 'stock')
+  assert.equal(scheduleSettings.etfMorning.runCount, 2)
+  assert.equal(scheduleSettings.etfMorning.prompt, 'etf')
+  assert.equal(scheduleSettings.etfMorning.enabled, false)
+})
+
 test('syncFromSchedules normalizes pre-market times to supported button options', () => {
   const { scheduleSettings, syncFromSchedules } = useScheduleForm()
 

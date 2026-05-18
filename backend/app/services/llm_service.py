@@ -255,11 +255,18 @@ class LLMService:
             base_context=tool_context,
         )
 
-        def _chat_tool_executor(tool_name: str, arguments: dict[str, Any]) -> dict[str, Any]:
+        def _chat_tool_executor(
+            tool_name: str,
+            arguments: dict[str, Any],
+            progress_emit: Any = None,
+        ) -> dict[str, Any]:
+            tool_context_with_emit = dict(chat_tool_context)
+            if callable(progress_emit):
+                tool_context_with_emit["emit"] = progress_emit
             return skill_registry.execute_tool(
                 tool_name=tool_name,
                 arguments=arguments,
-                context=chat_tool_context,
+                context=tool_context_with_emit,
             )
 
         result = self._agent_loop(
@@ -365,15 +372,22 @@ class LLMService:
 
         run_type = str(getattr(app_settings, "run_type", "analysis") or "analysis")
 
-        def _run_tool_executor(tool_name: str, arguments: dict[str, Any]) -> dict[str, Any]:
+        def _run_tool_executor(
+            tool_name: str,
+            arguments: dict[str, Any],
+            progress_emit: Any = None,
+        ) -> dict[str, Any]:
+            tool_context = build_skill_context(
+                run_type=run_type,
+                app_settings=app_settings,
+                client=client,
+            )
+            if callable(progress_emit):
+                tool_context["emit"] = progress_emit
             return skill_registry.execute_tool(
                 tool_name=tool_name,
                 arguments=arguments,
-                context=build_skill_context(
-                    run_type=run_type,
-                    app_settings=app_settings,
-                    client=client,
-                ),
+                context=tool_context,
             )
 
         result = self._agent_loop(
@@ -409,7 +423,7 @@ class LLMService:
         initial_messages: list[dict[str, Any]],
         run_type: str,
         timeout_seconds: int,
-        tool_executor: Callable[[str, dict[str, Any]], dict[str, Any]],
+        tool_executor: Callable[..., dict[str, Any]],
         emit: Any = None,
         cancel_event: threading.Event | None = None,
     ) -> dict[str, Any]:
@@ -493,7 +507,18 @@ class LLMService:
                     arguments=arguments,
                     status="running",
                 )
-                tool_result = tool_executor(tool_name, arguments)
+                def _tool_progress(**progress: Any) -> None:
+                    _emit(
+                        "tool_call",
+                        phase="llm",
+                        tool_name=tool_name,
+                        tool_call_id=tool_call.get("id"),
+                        arguments=arguments,
+                        status="running",
+                        **progress,
+                    )
+
+                tool_result = tool_executor(tool_name, arguments, _tool_progress)
                 _emit(
                     "tool_call",
                     phase="llm",

@@ -352,9 +352,15 @@ function createRunStream() {
         phase,
         status: 'running',
         arguments: event.arguments,
+        summary: event.summary as string | undefined,
         started_at: normalizeTs(event.ts),
       })
       appendLiveApiDetail(event, resultStatus)
+      return
+    }
+
+    if (status === 'running' && existing) {
+      existing.summary = event.summary as string | undefined
       return
     }
 

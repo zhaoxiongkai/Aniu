@@ -51,12 +51,24 @@ class Settings(BaseSettings):
     cors_allow_origins: list[str] = Field(
         default_factory=lambda: ["*"], alias="CORS_ALLOW_ORIGINS"
     )
+    email_alerts_enabled: bool = Field(default=False, alias="EMAIL_ALERTS_ENABLED")
+    email_smtp_host: str | None = Field(default=None, alias="EMAIL_SMTP_HOST")
+    email_smtp_port: int = Field(default=465, alias="EMAIL_SMTP_PORT")
+    email_smtp_use_ssl: bool = Field(default=True, alias="EMAIL_SMTP_USE_SSL")
+    email_smtp_username: str | None = Field(default=None, alias="EMAIL_SMTP_USERNAME")
+    email_smtp_password: str | None = Field(default=None, alias="EMAIL_SMTP_PASSWORD")
+    email_from: str | None = Field(default=None, alias="EMAIL_FROM")
+    email_to: list[str] = Field(default_factory=list, alias="EMAIL_TO")
 
     @field_validator(
         "mx_apikey",
         "openai_base_url",
         "openai_api_key",
         "app_login_password",
+        "email_smtp_host",
+        "email_smtp_username",
+        "email_smtp_password",
+        "email_from",
         mode="before",
     )
     @classmethod
@@ -81,6 +93,19 @@ class Settings(BaseSettings):
         if isinstance(value, list):
             return [str(item) for item in value]
         return ["*"]
+
+    @field_validator("email_to", mode="before")
+    @classmethod
+    def parse_email_recipients(cls, value: object) -> list[str]:
+        if isinstance(value, str):
+            return [
+                item.strip()
+                for item in value.replace(";", ",").split(",")
+                if item.strip()
+            ]
+        if isinstance(value, list):
+            return [str(item).strip() for item in value if str(item).strip()]
+        return []
 
 
 @lru_cache

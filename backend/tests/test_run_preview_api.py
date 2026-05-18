@@ -127,3 +127,4 @@ def test_get_run_raw_tool_preview_returns_404_for_missing_index(monkeypatch, tmp
     database_module._engine = None
     database_module._session_local = None
     get_settings.cache_clear()
+

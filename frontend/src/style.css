@@ -288,6 +288,11 @@ textarea {
   margin-top: 20px;
 }
 
+.overview-stats-compact {
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  margin: 0 0 16px;
+}
+
 .stat-card {
   padding: 24px;
   border-radius: 18px;
@@ -521,6 +526,26 @@ textarea {
   overflow: hidden;
 }
 
+.positions-summary-strip {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
+  margin-bottom: 16px;
+  padding: 12px 14px;
+  border-radius: 12px;
+  border: 1px solid rgba(145, 170, 214, 0.12);
+  background: rgba(15, 23, 42, 0.5);
+  color: #9eb2d2;
+  font-size: 13px;
+}
+
+.positions-summary-strip strong {
+  color: #eef4ff;
+  font-size: 16px;
+  font-weight: 700;
+}
+
 .positions-grid-header {
   height: 45px;
   background: rgba(9, 14, 24, 0.96);
@@ -650,6 +675,28 @@ textarea {
     minmax(170px, 1.02fr)
     minmax(170px, 1.02fr)
     minmax(170px, 1.02fr);
+}
+
+.etf-grid-row {
+  display: grid;
+  grid-template-columns:
+    150px
+    minmax(150px, 1fr)
+    minmax(180px, 1.1fr)
+    minmax(180px, 1.1fr)
+    minmax(120px, 0.7fr);
+}
+
+.etf-grid-row-head {
+  min-height: var(--overview-table-head-height);
+}
+
+.positions-grid-body .etf-grid-row {
+  min-height: var(--overview-table-row-height);
+}
+
+.positions-grid-body .etf-grid-row:last-child .positions-grid-cell {
+  border-bottom: none;
 }
 
 .orders-grid-row {
@@ -1954,6 +2001,48 @@ textarea {
   gap: 16px;
 }
 
+.analysis-scope-tabs {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  margin: 0 0 16px;
+}
+
+.analysis-scope-tab {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 3px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid rgba(145, 170, 214, 0.12);
+  background: rgba(15, 23, 42, 0.5);
+  color: #9eb2d2;
+  cursor: pointer;
+  transition: border-color 0.15s ease, background 0.15s ease, color 0.15s ease;
+}
+
+.analysis-scope-tab:hover {
+  border-color: rgba(145, 170, 214, 0.25);
+  background: rgba(15, 23, 42, 0.66);
+}
+
+.analysis-scope-tab.is-active {
+  border-color: rgba(81, 180, 255, 0.42);
+  background: rgba(81, 180, 255, 0.12);
+  color: #eef4ff;
+}
+
+.analysis-scope-tab span {
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.analysis-scope-tab small {
+  color: #7a90b0;
+  font-size: 11px;
+}
+
 .run-group {
   display: flex;
   flex-direction: column;
@@ -2102,6 +2191,25 @@ textarea {
   margin-bottom: 4px;
   text-align: center;
   line-height: 1.2;
+}
+
+.run-card-scope {
+  margin-bottom: 4px;
+  padding: 2px 6px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1.2;
+}
+
+.run-card-scope.scope-stock {
+  background: rgba(81, 180, 255, 0.12);
+  color: #86cfff;
+}
+
+.run-card-scope.scope-etf {
+  background: rgba(255, 184, 77, 0.12);
+  color: #ffbf5f;
 }
 
 .run-card-time {
@@ -2923,6 +3031,18 @@ textarea {
   max-width: 320px;
 }
 
+.run-control {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.run-switch {
+  flex: 0 0 auto;
+}
+
 @media (max-width: 900px) {
   .choice-chip-group {
     grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -3027,6 +3147,11 @@ textarea {
 .overview-tag.tag-trade {
   background: rgba(255, 97, 132, 0.1);
   color: #ff6184;
+}
+
+.overview-tag.tag-etf {
+  background: rgba(255, 184, 77, 0.12);
+  color: #ffbf5f;
 }
 
 .next-run-info {
@@ -3183,6 +3308,11 @@ textarea {
 .run-schedule {
   padding-top: 14px;
   border-top: 1px solid rgba(145, 170, 214, 0.08);
+}
+
+.run-schedule.is-disabled,
+.run-prompt.is-disabled {
+  opacity: 0.5;
 }
 
 .schedule-label {
@@ -4291,6 +4421,10 @@ textarea {
   .overview-stats {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
+
+  .overview-stats-compact {
+    grid-template-columns: 1fr;
+  }
   
   .tabs {
     flex-wrap: wrap;
@@ -4343,6 +4477,10 @@ textarea {
     grid-template-columns: 1fr;
   }
 
+  .etf-grid-row {
+    grid-template-columns: 1fr;
+  }
+
   .runtime-content,
   .runtime-stats {
     grid-template-columns: 1fr;
@@ -4372,6 +4510,13 @@ textarea {
 
   .tab-button {
     flex: 1 1 100%;
+  }
+}
+
+@media (max-width: 720px) {
+  .run-control {
+    width: 100%;
+    justify-content: flex-start;
   }
 }
 

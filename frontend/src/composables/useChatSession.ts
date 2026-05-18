@@ -157,8 +157,11 @@ export function useChatSession() {
             tool_name: toolName,
             status: 'running',
             arguments: event.arguments,
+            summary: event.summary as string | undefined,
             started_at: Number(event.ts || Date.now() / 1000),
           })
+        } else if (status === 'running' && existing) {
+          existing.summary = event.summary as string | undefined
         } else if (status === 'done' && existing) {
           existing.status = 'done'
           existing.ok = event.ok as boolean | undefined

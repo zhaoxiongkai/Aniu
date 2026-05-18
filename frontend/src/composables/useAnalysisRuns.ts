@@ -5,6 +5,7 @@ import type { ApiDetail, RawToolPreview, RawToolPreviewDetail, RunDetail, RunSum
 export interface AnalysisRunViewModel {
   id: number
   analysisType: string
+  accountScope: 'stock' | 'etf'
   startTime: string
   endTime: string | null
   duration: string
@@ -23,6 +24,8 @@ export interface AnalysisRunViewModel {
 }
 
 const RUNS_PAGE_SIZE = 100
+
+export type AnalysisRunScopeFilter = 'all' | 'stock' | 'etf'
 
 function formatTokenValue(value: number | null | undefined) {
   return typeof value === 'number' && Number.isFinite(value) && value > 0 ? String(value) : '--'
@@ -60,7 +63,12 @@ function getDuration(startedAt: string, finishedAt: string | null) {
   return `${minutes}分${String(seconds).padStart(2, '0')}秒`
 }
 
-function getRunTypeText(detail: Pick<RunDetail, 'run_type' | 'trigger_source'>) {
+function isEtfRun(detail: Pick<RunDetail, 'schedule_name'>) {
+  return String(detail.schedule_name || '').trim().startsWith('ETF')
+}
+
+function getRunTypeText(detail: Pick<RunDetail, 'run_type' | 'trigger_source' | 'schedule_name'>) {
+  if (isEtfRun(detail)) return 'ETF投资任务'
   if (detail.run_type === 'trade') return '交易任务'
   if (detail.run_type === 'analysis') return '分析任务'
   if (detail.trigger_source === 'manual') return '手动运行'
@@ -250,6 +258,7 @@ function mapRunSummaryToViewModel(summary: RunSummary): AnalysisRunViewModel {
   return {
     id: summary.id,
     analysisType: getRunTypeText(summary),
+    accountScope: isEtfRun(summary) ? 'etf' : 'stock',
     startTime: summary.started_at,
     endTime: summary.finished_at,
     duration: getDuration(summary.started_at, summary.finished_at),
@@ -278,6 +287,7 @@ function mapRunDetailToViewModel(detail: RunDetail): AnalysisRunViewModel {
   return {
     id: detail.id,
     analysisType: getRunTypeText(detail),
+    accountScope: isEtfRun(detail) ? 'etf' : 'stock',
     startTime: detail.started_at,
     endTime: detail.finished_at,
     duration: getDuration(detail.started_at, detail.finished_at),
@@ -326,6 +336,7 @@ export function useAnalysisRuns(options: {
   const renderedOutputLoading = ref(false)
   const todayRuns = ref<AnalysisRunViewModel[]>([])
   const historyRuns = ref<AnalysisRunViewModel[]>([])
+  const scopeFilter = ref<AnalysisRunScopeFilter>('all')
   const selectedDate = ref('')
   const loading = ref(false)
   const errorMessage = ref('')
@@ -335,11 +346,13 @@ export function useAnalysisRuns(options: {
   const rawToolPreviewRequests = new Map<string, Promise<RawToolPreviewDetail>>()
 
   let markdownRendererPromise: Promise<((content: string) => string)> | null = null
+  let selectedOutputRenderTicket = 0
 
   const allRuns = computed(() => sourceSummaries.value)
 
   function shouldIncludeRun(run: AnalysisRunViewModel) {
-    return !!run
+    if (!run) return false
+    return scopeFilter.value === 'all' || run.accountScope === scopeFilter.value
   }
 
   function filterVisibleRuns(runs: AnalysisRunViewModel[]) {
@@ -375,6 +388,22 @@ export function useAnalysisRuns(options: {
     }
 
     selectedRunLoading.value = false
+  }
+
+  async function applyScopeFilter(nextScope: AnalysisRunScopeFilter) {
+    scopeFilter.value = nextScope
+    const today = new Date()
+    const todaysSummaries = sourceSummaries.value.filter((item) => isSameDay(item.started_at, today))
+    todayRuns.value = filterVisibleRuns(todaysSummaries.map(mapRunSummaryToViewModel))
+
+    if (selectedDate.value) {
+      const historicalSummaries = sourceSummaries.value.filter((item) => item.started_at.startsWith(selectedDate.value))
+      historyRuns.value = filterVisibleRuns(historicalSummaries.map(mapRunSummaryToViewModel))
+    } else {
+      historyRuns.value = []
+    }
+
+    await syncSelectedRun(selectedDate.value ? historyRuns.value : todayRuns.value)
   }
 
   async function ensureRunDetail(runId: number, force = false) {
@@ -534,26 +563,37 @@ export function useAnalysisRuns(options: {
   }
 
   async function renderSelectedOutput(content: string | null) {
+    const ticket = ++selectedOutputRenderTicket
+
     if (!content) {
-      renderedOutputHtml.value = ''
-      renderedOutputLoading.value = false
+      if (ticket === selectedOutputRenderTicket) {
+        renderedOutputHtml.value = ''
+        renderedOutputLoading.value = false
+      }
       return
     }
 
     const cached = markdownCache.get(content)
     if (cached) {
-      renderedOutputHtml.value = cached
-      renderedOutputLoading.value = false
+      if (ticket === selectedOutputRenderTicket) {
+        renderedOutputHtml.value = cached
+        renderedOutputLoading.value = false
+      }
       return
     }
 
     renderedOutputLoading.value = true
-    const renderMarkdown = await getMarkdownRenderer()
-    const sanitized = renderMarkdown(content)
-    markdownCache.set(content, sanitized)
-    if (selectedRun.value?.output === content) {
-      renderedOutputHtml.value = sanitized
-      renderedOutputLoading.value = false
+    try {
+      const renderMarkdown = await getMarkdownRenderer()
+      const sanitized = renderMarkdown(content)
+      markdownCache.set(content, sanitized)
+      if (ticket === selectedOutputRenderTicket) {
+        renderedOutputHtml.value = sanitized
+      }
+    } finally {
+      if (ticket === selectedOutputRenderTicket) {
+        renderedOutputLoading.value = false
+      }
     }
   }
 
@@ -588,11 +628,13 @@ export function useAnalysisRuns(options: {
     todayRuns,
     historyRuns,
     selectedDate,
+    scopeFilter,
     loading,
     errorMessage,
     renderedOutputHtml,
     renderedOutputLoading,
     loadInitialRuns,
+    applyScopeFilter,
     selectRun,
     refreshRunDetail,
     ensureRawToolPreview,

@@ -32,6 +32,20 @@
 
             <div v-if="analysisError" class="error-banner">{{ analysisError }}</div>
 
+            <div class="analysis-scope-tabs" role="tablist" aria-label="分析视图">
+              <button
+                v-for="option in analysisScopeOptions"
+                :key="option.value"
+                type="button"
+                class="analysis-scope-tab"
+                :class="{ 'is-active': scopeFilter === option.value }"
+                @click="handleScopeFilterChange(option.value)"
+              >
+                <span>{{ option.label }}</span>
+                <small>{{ option.description }}</small>
+              </button>
+            </div>
+
             <div class="runs-container">
               <!-- 今日运行 - 方块网格 -->
               <div class="run-group" v-if="todayRuns.length || livePlaceholderVisible">
@@ -59,6 +73,7 @@
                      >
                      <div class="run-card-status" :class="isTodayRunLive(run.id) ? 'dot-running' : statusTone(run.status)"></div>
                      <div class="run-card-type">{{ run.analysisType }}</div>
+                     <div class="run-card-scope" :class="`scope-${run.accountScope}`">{{ getRunScopeLabel(run.accountScope) }}</div>
                      <div class="run-card-time">{{ formatShortTime(run.startTime) }}</div>
                      <div class="run-card-duration">{{ run.duration }}</div>
                     </div>
@@ -100,6 +115,7 @@
                     >
                      <div class="run-card-status" :class="statusTone(run.status)"></div>
                      <div class="run-card-type">{{ run.analysisType }}</div>
+                     <div class="run-card-scope" :class="`scope-${run.accountScope}`">{{ getRunScopeLabel(run.accountScope) }}</div>
                      <div class="run-card-time">{{ formatShortTime(run.startTime) }}</div>
                      <div class="run-card-duration">{{ run.duration }}</div>
                    </div>
@@ -314,10 +330,12 @@ const {
   todayRuns,
   historyRuns,
   selectedDate,
+  scopeFilter,
   errorMessage: analysisError,
   renderedOutputHtml,
   renderedOutputLoading,
   loadInitialRuns,
+  applyScopeFilter,
   selectRun,
   refreshRunDetail,
   ensureRawToolPreview,
@@ -327,6 +345,12 @@ const {
   loadRunDetail: store.loadRunDetail,
   loadRawToolPreview: api.getRunRawToolPreview,
 })
+
+const analysisScopeOptions = [
+  { value: 'all', label: '全部分析', description: '股票 + ETF' },
+  { value: 'stock', label: '股票分析', description: '普通分析与股票交易' },
+  { value: 'etf', label: 'ETF 分析', description: 'ETF 投资任务' },
+] as const
 
 onMounted(() => {
   loadInitialRuns({ syncSelection: !liveFocused.value })
@@ -371,11 +395,14 @@ const manualRunTypeText = computed(() => {
 })
 
 const tradeScheduleId = computed(() => {
-  const match = store.schedules.find((item) => item.run_type === 'trade')
+  const schedules = store.schedules.filter((item) => item.run_type === 'trade')
+  const match = scopeFilter.value === 'etf'
+    ? schedules.find((item) => item.name.startsWith('ETF'))
+    : schedules.find((item) => !item.name.startsWith('ETF'))
   return match?.id ?? null
 })
 
-const manualTradeRunTypeText = computed(() => '交易任务')
+const manualTradeRunTypeText = computed(() => (scopeFilter.value === 'etf' ? 'ETF投资任务' : '交易任务'))
 
 const manualRunButtonTitle = computed(() =>
   preMarketScheduleId.value === null
@@ -385,9 +412,23 @@ const manualRunButtonTitle = computed(() =>
 
 const manualTradeButtonTitle = computed(() =>
   tradeScheduleId.value === null
-    ? '未找到交易任务，将使用默认手动交易模板执行'
-    : '手动执行一次交易任务',
+    ? scopeFilter.value === 'etf'
+      ? '未找到 ETF 投资任务，请先在定时任务页启用 ETF 投资任务'
+      : '未找到交易任务，将使用默认手动交易模板执行'
+    : scopeFilter.value === 'etf'
+      ? '手动执行一次 ETF 投资任务'
+      : '手动执行一次交易任务',
 )
+
+async function handleScopeFilterChange(scope: typeof analysisScopeOptions[number]['value']) {
+  liveFocused.value = false
+  clearPreviewFocus()
+  await applyScopeFilter(scope)
+}
+
+function getRunScopeLabel(scope: 'stock' | 'etf') {
+  return scope === 'etf' ? 'ETF' : '股票'
+}
 
 async function startManualRun(options: {
   scheduleId?: number
@@ -425,6 +466,11 @@ async function handleManualRun() {
 }
 
 async function handleManualTrade() {
+  if (scopeFilter.value === 'etf' && tradeScheduleId.value === null) {
+    window.alert('未找到 ETF 投资任务，请先在定时任务页启用 ETF 投资任务。')
+    return
+  }
+
   await startManualRun({
     scheduleId: tradeScheduleId.value ?? undefined,
     runType: tradeScheduleId.value == null ? 'trade' : undefined,

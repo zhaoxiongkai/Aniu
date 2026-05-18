@@ -801,9 +801,16 @@ class ChatSessionService:
                                 "tool_call_id": tool_call_id or None,
                                 "status": "running",
                                 "arguments": event.get("arguments"),
+                                "summary": event.get("summary"),
+                                "progress": event.get("progress"),
                                 "started_at": event.get("ts"),
                             }
                         )
+                    elif status == "running" and existing is not None:
+                        if event.get("summary") is not None:
+                            existing["summary"] = event.get("summary")
+                        if event.get("progress") is not None:
+                            existing["progress"] = event.get("progress")
                     elif status == "done":
                         if existing is not None:
                             existing["status"] = "done"

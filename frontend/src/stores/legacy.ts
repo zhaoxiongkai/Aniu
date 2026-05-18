@@ -147,6 +147,13 @@ function defaultRuntimeOverview(): RuntimeOverview {
   }
 }
 
+function getScheduleCategory(item: Pick<ScheduleConfig, 'name' | 'run_type'>) {
+  if (item.name.startsWith('ETF')) {
+    return 'ETF投资任务'
+  }
+  return item.run_type === 'trade' ? '交易任务' : '分析任务'
+}
+
 export const useAppStore = defineStore('app', () => {
   const settings = reactive<SettingsPayload>(defaultSettings())
   const schedules = ref<ScheduleEditor[]>([])
@@ -174,7 +181,7 @@ export const useAppStore = defineStore('app', () => {
         const displayTime = `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`
         const sortKey = hour * 60 + minute
         const displayName = item.name.replace(/#(\d+)$/, '$1号')
-        const category = item.run_type === 'trade' ? '交易任务' : '分析任务'
+        const category = getScheduleCategory(item)
         return {
           id: item.id,
           name: displayName,

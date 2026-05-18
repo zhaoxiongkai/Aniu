@@ -390,7 +390,6 @@ def test_chat_tools_available_for_chat_run_type(monkeypatch, tmp_path) -> None:
     assert "mx_manage_self_select" in tool_names
     assert "mx_moni_trade" in tool_names
     assert "mx_moni_cancel" in tool_names
-
     database_module._engine = None
     database_module._session_local = None
     get_settings.cache_clear()

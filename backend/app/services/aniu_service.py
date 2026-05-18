@@ -34,6 +34,7 @@ from app.schemas.aniu import AppSettingsUpdate, ChatRequest, ScheduleUpdate
 from app.schemas.aniu import ChatMessageRead, PersistentSessionRead
 from app.skills.providers import build_skill_context
 from app.services.event_bus import event_bus, make_emitter
+from app.services.email_notification_service import email_notification_service
 from app.services.llm_service import LLMStreamCancelled, llm_service
 from app.services.token_estimator import estimate_messages_tokens, estimate_text_tokens
 from app.services.trading_calendar_service import trading_calendar_service
@@ -204,7 +205,12 @@ class AniuService:
             return run_type
 
         name = str(schedule.name or "").strip()
-        if name.startswith("上午运行") or name.startswith("下午运行"):
+        if (
+            name.startswith("上午运行")
+            or name.startswith("下午运行")
+            or name.startswith("ETF上午运行")
+            or name.startswith("ETF下午运行")
+        ):
             return "trade"
         return "analysis"
 
@@ -248,7 +254,12 @@ class AniuService:
         schedule_name = str(run.schedule_name or "").strip()
         if schedule_name in ANALYSIS_TASK_NAMES:
             return "analysis"
-        if schedule_name.startswith("上午运行") or schedule_name.startswith("下午运行"):
+        if (
+            schedule_name.startswith("上午运行")
+            or schedule_name.startswith("下午运行")
+            or schedule_name.startswith("ETF上午运行")
+            or schedule_name.startswith("ETF下午运行")
+        ):
             return "trade"
 
         if run.trade_orders:
@@ -1859,6 +1870,7 @@ class AniuService:
                     "symbol": action.get("symbol"),
                     "action": action.get("action"),
                     "quantity": action.get("quantity"),
+                    "price_type": action.get("price_type") or "MARKET",
                     "price": action.get("price"),
                     "status": action.get("status") or "submitted",
                 }
@@ -2000,6 +2012,22 @@ class AniuService:
                             else run.context_summary_version
                         )
                         db.add(run)
+
+            try:
+                email_notification_service.send_trade_alert(
+                    settings=get_settings(),
+                    run_id=run_id,
+                    trigger_source=trigger_source,
+                    schedule_name=getattr(settings, "schedule_name", None),
+                    orders=persisted_trade_orders,
+                    final_answer=str(decision.get("final_answer") or "").strip() or None,
+                )
+            except Exception as exc:
+                logger.warning(
+                    "email trade alert skipped after unexpected error: run_id=%s error=%s",
+                    run_id,
+                    exc,
+                )
 
             for action in persisted_trade_orders:
                 _emit(

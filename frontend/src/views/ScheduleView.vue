@@ -12,7 +12,10 @@
 
             <div v-if="activeScheduleCards.length" class="schedule-overview-list">
               <article v-for="task in activeScheduleCards" :key="task.id" class="schedule-overview-card">
-                <span class="overview-tag" :class="task.category === '交易任务' ? 'tag-trade' : 'tag-analysis'">{{ task.category }}</span>
+                <span
+                  class="overview-tag"
+                  :class="task.category === 'ETF投资任务' ? 'tag-etf' : task.category === '交易任务' ? 'tag-trade' : 'tag-analysis'"
+                >{{ task.category }}</span>
                 <strong>{{ task.name }}</strong>
                 <p>交易日 {{ task.displayTime }}</p>
               </article>
@@ -24,7 +27,7 @@
               <span class="next-run-prefix">下次运行：</span>
               <span
                 class="next-run-category"
-                :class="nextScheduledTask.category === '交易任务' ? 'is-trade' : 'is-analysis'"
+                :class="nextScheduledTask.category === '交易任务' || nextScheduledTask.category === 'ETF投资任务' ? 'is-trade' : 'is-analysis'"
               >
                 {{ nextScheduledTask.category }}
               </span>
@@ -266,6 +269,109 @@
                   </article>
                 </div>
               </section>
+
+              <section class="schedule-section">
+                <header class="section-header">
+                  <h3>ETF 投资任务</h3>
+                  <p class="section-subtitle">按股票交易任务的节奏执行 ETF 投资，单次金额上限由系统固定</p>
+                </header>
+
+                <div class="run-list">
+                  <article class="run-item">
+                    <div class="run-main">
+                      <div class="run-meta">
+                        <h4 class="run-name">ETF 上午运行</h4>
+                        <p class="run-time">09:30 - 11:30</p>
+                      </div>
+                      <div class="run-control">
+                        <label class="switch run-switch">
+                          <input type="checkbox" v-model="scheduleSettings.etfMorning.enabled" />
+                          <span class="switch-track"></span>
+                        </label>
+                        <div class="choice-chip-group run-count-group" :class="{ 'is-disabled': !scheduleSettings.etfMorning.enabled }">
+                          <button
+                            v-for="count in runCountOptions"
+                            :key="`etf-morning-${count}`"
+                            type="button"
+                            class="choice-chip"
+                            :class="{ 'is-active': scheduleSettings.etfMorning.runCount === count }"
+                            :disabled="!scheduleSettings.etfMorning.enabled"
+                            @click="scheduleSettings.etfMorning.runCount = count"
+                          >
+                            {{ count }}次
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                    <div class="run-schedule" :class="{ 'is-disabled': !scheduleSettings.etfMorning.enabled }">
+                      <span class="schedule-label">计划运行时间</span>
+                      <div class="schedule-badges">
+                        <span
+                          v-for="(time, index) in getEtfMorningRunTimes().split(', ')"
+                          :key="'em'+index"
+                          class="badge"
+                        >{{ time }}</span>
+                      </div>
+                    </div>
+                    <div class="run-prompt" :class="{ 'is-disabled': !scheduleSettings.etfMorning.enabled }">
+                      <span class="prompt-label">提示词<small>{{ scheduleSettings.etfMorning.prompt.length }}字</small></span>
+                      <textarea
+                        v-model="scheduleSettings.etfMorning.prompt"
+                        rows="2"
+                        @input="autoResizeTextarea($event)"
+                        :disabled="!scheduleSettings.etfMorning.enabled"
+                      ></textarea>
+                    </div>
+                  </article>
+
+                  <article class="run-item">
+                    <div class="run-main">
+                      <div class="run-meta">
+                        <h4 class="run-name">ETF 下午运行</h4>
+                        <p class="run-time">13:00 - 15:00</p>
+                      </div>
+                      <div class="run-control">
+                        <label class="switch run-switch">
+                          <input type="checkbox" v-model="scheduleSettings.etfAfternoon.enabled" />
+                          <span class="switch-track"></span>
+                        </label>
+                        <div class="choice-chip-group run-count-group" :class="{ 'is-disabled': !scheduleSettings.etfAfternoon.enabled }">
+                          <button
+                            v-for="count in runCountOptions"
+                            :key="`etf-afternoon-${count}`"
+                            type="button"
+                            class="choice-chip"
+                            :class="{ 'is-active': scheduleSettings.etfAfternoon.runCount === count }"
+                            :disabled="!scheduleSettings.etfAfternoon.enabled"
+                            @click="scheduleSettings.etfAfternoon.runCount = count"
+                          >
+                            {{ count }}次
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                    <div class="run-schedule" :class="{ 'is-disabled': !scheduleSettings.etfAfternoon.enabled }">
+                      <span class="schedule-label">计划运行时间</span>
+                      <div class="schedule-badges">
+                        <span
+                          v-for="(time, index) in getEtfAfternoonRunTimes().split(', ')"
+                          :key="'ea'+index"
+                          class="badge"
+                        >{{ time }}</span>
+                      </div>
+                    </div>
+                    <div class="run-prompt" :class="{ 'is-disabled': !scheduleSettings.etfAfternoon.enabled }">
+                      <span class="prompt-label">提示词<small>{{ scheduleSettings.etfAfternoon.prompt.length }}字</small></span>
+                      <textarea
+                        v-model="scheduleSettings.etfAfternoon.prompt"
+                        rows="2"
+                        @input="autoResizeTextarea($event)"
+                        :disabled="!scheduleSettings.etfAfternoon.enabled"
+                      ></textarea>
+                    </div>
+                  </article>
+                </div>
+              </section>
             </div>
 
             <div class="panel-actions">
@@ -296,6 +402,8 @@ const {
   autoResizeTextarea,
   getMorningRunTimes,
   getAfternoonRunTimes,
+  getEtfMorningRunTimes,
+  getEtfAfternoonRunTimes,
 } = useScheduleForm()
 
 async function saveScheduleSettings() {

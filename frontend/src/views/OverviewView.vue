@@ -92,13 +92,92 @@
           <section class="panel positions-panel">
             <div class="panel-head">
               <div class="head-main">
+                <h2>ETF 收益</h2>
+                <p class="section-kicker">ETF Profit</p>
+              </div>
+            </div>
+            <div v-if="displayEtfPositions.length" class="overview-stats overview-stats-compact">
+              <div class="stat-card">
+                <span class="meta-label">ETF 模拟账户</span>
+                <strong>{{ formatMoney(ETF_INITIAL_CAPITAL) }}</strong>
+                <p>独立初始资金</p>
+              </div>
+              <div class="stat-card">
+                <span class="meta-label">ETF 总资产</span>
+                <strong :class="profitClass(getAssetDelta(etfTotalAssets, ETF_INITIAL_CAPITAL))">{{ formatMoney(etfTotalAssets) }}</strong>
+                <p>现金 + ETF 持仓市值</p>
+              </div>
+              <div class="stat-card">
+                <span class="meta-label">ETF 可用现金</span>
+                <strong>{{ formatMoney(etfCashBalance) }}</strong>
+                <p>按模拟账户独立估算</p>
+              </div>
+              <div class="stat-card">
+                <span class="meta-label">ETF 当日盈亏</span>
+                <strong :class="profitClass(etfDailyProfit)">{{ formatSignedMoney(etfDailyProfit) }}</strong>
+                <p>来自实时持仓接口</p>
+              </div>
+              <div class="stat-card">
+                <span class="meta-label">ETF 总盈亏</span>
+                <strong :class="profitClass(etfHoldingProfit)">{{ formatSignedMoney(etfHoldingProfit) }}</strong>
+                <p>{{ displayEtfPositions.length }} 个 ETF 持仓</p>
+              </div>
+            </div>
+            <div v-if="displayEtfPositions.length" class="positions-surface">
+              <div class="positions-grid-header">
+                <div class="etf-grid-row etf-grid-row-head">
+                  <div class="positions-grid-cell positions-grid-cell-primary overview-grid-head-cell">名称 / 代码</div>
+                  <div class="positions-grid-cell overview-grid-head-cell">持仓市值</div>
+                  <div class="positions-grid-cell overview-grid-head-cell">当日盈亏 / 当日收益率</div>
+                  <div class="positions-grid-cell overview-grid-head-cell">总盈亏 / 总收益率</div>
+                  <div class="positions-grid-cell overview-grid-head-cell">仓位占比</div>
+                </div>
+              </div>
+              <div class="positions-grid-body">
+                <div class="etf-grid-row" v-for="pos in displayEtfPositions" :key="`etf-${pos.symbol}`">
+                  <div class="positions-grid-cell positions-grid-cell-primary">
+                    <div class="position-cell-main">
+                      <strong class="position-name">{{ pos.name }}</strong>
+                      <span class="position-symbol">{{ pos.symbol }}</span>
+                    </div>
+                  </div>
+                  <div class="positions-grid-cell">{{ formatMoney(pos.amount) }}</div>
+                  <div class="positions-grid-cell">
+                    <div class="position-cell-stack">
+                      <span :class="profitClass(pos.day_profit)">{{ formatSignedMoney(pos.day_profit) }}</span>
+                      <span class="metric-sub" :class="profitClass(pos.day_profit_ratio)">{{ formatPercent(pos.day_profit_ratio) }}</span>
+                    </div>
+                  </div>
+                  <div class="positions-grid-cell">
+                    <div class="position-cell-stack">
+                      <span :class="profitClass(pos.profit)">{{ formatSignedMoney(pos.profit) }}</span>
+                      <span class="metric-sub" :class="profitClass(pos.profit_ratio)">{{ formatPercent(pos.profit_ratio) }}</span>
+                    </div>
+                  </div>
+                  <div class="positions-grid-cell">{{ getPositionRatioText(pos.position_ratio) }}</div>
+                </div>
+              </div>
+            </div>
+            <div v-else class="empty-state">
+              <p>{{ errorMessage || '当前实时持仓中没有识别到 ETF。ETF 收益会在账户接口返回 ETF 持仓后显示。' }}</p>
+            </div>
+          </section>
+
+          <section class="panel positions-panel">
+            <div class="panel-head">
+              <div class="head-main">
                 <h2>持仓情况</h2>
                 <p class="section-kicker">Positions</p>
               </div>
             </div>
+            <div v-if="displayStockPositions.length" class="positions-summary-strip">
+              <span>股票持仓市值</span>
+              <strong>{{ formatMoney(stockMarketValue) }}</strong>
+              <span>{{ displayStockPositions.length }} 个股票持仓，ETF 已单独归类</span>
+            </div>
             <div
               class="positions-surface"
-              v-if="displayPositions.length"
+              v-if="displayStockPositions.length"
             >
               <div class="positions-grid-header">
                 <div class="positions-grid-row positions-grid-row-head">
@@ -113,7 +192,7 @@
               </div>
 
               <div class="positions-grid-body">
-                <div class="positions-grid-row" v-for="pos in displayPositions" :key="pos.symbol">
+                <div class="positions-grid-row" v-for="pos in displayStockPositions" :key="pos.symbol">
                   <div class="positions-grid-cell positions-grid-cell-primary">
                     <div class="position-cell-main">
                       <strong class="position-name">{{ pos.name }}</strong>
@@ -446,9 +525,19 @@ import { formatMinuteTime, formatMoney, formatPercent, formatTime } from '@/util
 const store = useAppStore()
 const { account, runtimeOverview, errorMessage, accountRefreshing, canManualRefreshAccount, accountRefreshCooldownText } = storeToRefs(store)
 
+const ETF_INITIAL_CAPITAL = 10000
+
 const displayPositions = computed(() => account.value.positions.filter((position) => (position.volume ?? 0) > 0))
+const displayEtfPositions = computed(() => displayPositions.value.filter((position) => isEtfPosition(position.name, position.symbol)))
+const displayStockPositions = computed(() => displayPositions.value.filter((position) => !isEtfPosition(position.name, position.symbol)))
 const displayOrders = computed(() => account.value.orders)
 const displayTradeSummaries = computed(() => account.value.trade_summaries)
+const etfMarketValue = computed(() => sumNullable(displayEtfPositions.value.map((position) => position.amount)))
+const etfDailyProfit = computed(() => sumNullable(displayEtfPositions.value.map((position) => position.day_profit)))
+const etfHoldingProfit = computed(() => sumNullable(displayEtfPositions.value.map((position) => position.profit)))
+const etfCashBalance = computed(() => Math.max(0, ETF_INITIAL_CAPITAL - (etfMarketValue.value ?? 0)))
+const etfTotalAssets = computed(() => etfCashBalance.value + (etfMarketValue.value ?? 0))
+const stockMarketValue = computed(() => sumNullable(displayStockPositions.value.map((position) => position.amount)))
 const tradeSuccessRate = computed(() => {
   const total = displayTradeSummaries.value.length
   if (total === 0) {
@@ -473,6 +562,24 @@ function formatSignedMoney(value: number | null | undefined) {
   if (value > 0) return `+${formatted}`
   if (value < 0) return `-${formatted}`
   return formatted
+}
+
+function sumNullable(values: Array<number | null | undefined>) {
+  let total = 0
+  let found = false
+  values.forEach((value) => {
+    if (value !== null && value !== undefined && !Number.isNaN(value)) {
+      total += value
+      found = true
+    }
+  })
+  return found ? total : null
+}
+
+function isEtfPosition(name: string | null | undefined, symbol: string | null | undefined) {
+  const normalizedName = String(name || '').toUpperCase()
+  const normalizedSymbol = String(symbol || '').toUpperCase().replace(/\.(SH|SZ)$/, '')
+  return normalizedName.includes('ETF') || /^(51|56|58|15)\d{4}$/.test(normalizedSymbol)
 }
 
 function profitClass(value: number | null | undefined) {

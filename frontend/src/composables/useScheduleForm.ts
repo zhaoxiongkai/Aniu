@@ -6,6 +6,8 @@ type ScheduleLike = Pick<ScheduleConfig, 'id' | 'name' | 'run_type' | 'cron_expr
 
 type ScheduleKey = 'preMarket' | 'midday' | 'postMarket'
 type SessionKey = 'morning' | 'afternoon'
+type EtfSessionKey = 'etfMorning' | 'etfAfternoon'
+type TradeSessionKey = SessionKey | EtfSessionKey
 
 type FixedTaskTimeOption = {
   hour: number
@@ -48,6 +50,8 @@ export interface ScheduleFormState {
   midday: { enabled: boolean; hour: number; minute: number; prompt: string }
   morning: { enabled: boolean; runCount: number; prompt: string }
   afternoon: { enabled: boolean; runCount: number; prompt: string }
+  etfMorning: { enabled: boolean; runCount: number; prompt: string }
+  etfAfternoon: { enabled: boolean; runCount: number; prompt: string }
 }
 
 const FIXED_TASK_NAMES = {
@@ -61,7 +65,18 @@ const SESSION_TASK_NAMES = {
   afternoon: '下午运行',
 } as const
 
+const ETF_SESSION_TASK_NAMES = {
+  etfMorning: 'ETF上午运行',
+  etfAfternoon: 'ETF下午运行',
+} as const
+
+const TRADE_SESSION_TASK_NAMES = {
+  ...SESSION_TASK_NAMES,
+  ...ETF_SESSION_TASK_NAMES,
+} as const
+
 const DEFAULT_TIMEOUT = 1800
+const ETF_INVESTMENT_LIMIT = 1000
 
 function normalizeSectionTime(section: ScheduleKey, hour: number, minute: number) {
   const options = FIXED_TASK_TIME_OPTIONS[section]
@@ -100,6 +115,8 @@ const defaultState = (): ScheduleFormState => ({
   midday: { enabled: false, hour: 12, minute: 0, prompt: '你正在执行午间复盘任务，请对上午市场和交易操作进行复盘，做好下午市场走势预测，为你决策交易做好准备。' },
   morning: { enabled: true, runCount: 2, prompt: '你正在执行盘中交易操作，你的唯一目标是追求收益最大化。' },
   afternoon: { enabled: true, runCount: 2, prompt: '你正在执行盘中交易操作，你的唯一目标是追求收益最大化。' },
+  etfMorning: { enabled: false, runCount: 2, prompt: `你正在执行ETF投资任务。仅围绕ETF标的进行判断和模拟交易，优先控制回撤与仓位纪律；单次ETF可投资金额上限${ETF_INVESTMENT_LIMIT}元，该金额为系统固定上限，不需要从API获取。` },
+  etfAfternoon: { enabled: false, runCount: 2, prompt: `你正在执行ETF投资任务。仅围绕ETF标的进行判断和模拟交易，优先控制回撤与仓位纪律；单次ETF可投资金额上限${ETF_INVESTMENT_LIMIT}元，该金额为系统固定上限，不需要从API获取。` },
 })
 
 function parseCron(cronExpression: string) {
@@ -114,10 +131,15 @@ function buildCron(hour: number, minute: number) {
   return `${minute} ${hour} * * 1-5`
 }
 
-function getSessionTimes(session: SessionKey, runCount: number) {
-  const count = Number(runCount)
+function normalizeSessionKey(session: TradeSessionKey): SessionKey {
+  return session === 'etfMorning' ? 'morning' : session === 'etfAfternoon' ? 'afternoon' : session
+}
 
-  if (session === 'morning') {
+function getSessionTimes(session: TradeSessionKey, runCount: number) {
+  const count = Number(runCount)
+  const normalizedSession = normalizeSessionKey(session)
+
+  if (normalizedSession === 'morning') {
     switch (count) {
       case 1:
         return [{ hour: 10, minute: 30 }]
@@ -146,10 +168,14 @@ function getSessionTimes(session: SessionKey, runCount: number) {
   }
 }
 
-function getSessionTimeLabels(session: SessionKey, runCount: number) {
+function getSessionTimeLabels(session: TradeSessionKey, runCount: number) {
   return getSessionTimes(session, runCount)
     .map(({ hour, minute }) => `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`)
     .join(', ')
+}
+
+function isStockSessionSchedule(item: ScheduleLike, key: SessionKey) {
+  return item.name.startsWith(SESSION_TASK_NAMES[key]) && !item.name.startsWith('ETF')
 }
 
 export function useScheduleForm() {
@@ -174,7 +200,21 @@ export function useScheduleForm() {
 
     ;(Object.keys(SESSION_TASK_NAMES) as SessionKey[]).forEach((key) => {
       const matched = schedules
-        .filter((item) => item.name.startsWith(SESSION_TASK_NAMES[key]))
+        .filter((item) => isStockSessionSchedule(item, key))
+        .sort((a, b) => a.cron_expression.localeCompare(b.cron_expression))
+
+      if (matched.length === 0) {
+        return
+      }
+
+      scheduleSettings[key].enabled = matched.some((item) => item.enabled)
+      scheduleSettings[key].runCount = Number(matched.length)
+      scheduleSettings[key].prompt = matched[0].task_prompt || scheduleSettings[key].prompt
+    })
+
+    ;(Object.keys(ETF_SESSION_TASK_NAMES) as EtfSessionKey[]).forEach((key) => {
+      const matched = schedules
+        .filter((item) => item.name.startsWith(ETF_SESSION_TASK_NAMES[key]))
         .sort((a, b) => a.cron_expression.localeCompare(b.cron_expression))
 
       if (matched.length === 0) {
@@ -202,12 +242,17 @@ export function useScheduleForm() {
       }
     })
 
-    const sessionPayload = (Object.keys(SESSION_TASK_NAMES) as SessionKey[]).flatMap((key) => {
+    const sessionPayload = (Object.keys(TRADE_SESSION_TASK_NAMES) as TradeSessionKey[]).flatMap((key) => {
       const current = scheduleSettings[key]
-      const existing = existingSchedules.filter((item) => item.name.startsWith(SESSION_TASK_NAMES[key]))
+      const existing = existingSchedules.filter((item) => {
+        if (key === 'morning' || key === 'afternoon') {
+          return isStockSessionSchedule(item, key)
+        }
+        return item.name.startsWith(TRADE_SESSION_TASK_NAMES[key])
+      })
       return getSessionTimes(key, current.runCount).map((time, index) => ({
         id: existing[index]?.id,
-        name: `${SESSION_TASK_NAMES[key]}${index + 1}号`,
+        name: `${TRADE_SESSION_TASK_NAMES[key]}${index + 1}号`,
         run_type: 'trade' as const,
         cron_expression: buildCron(time.hour, time.minute),
         task_prompt: current.prompt,
@@ -238,6 +283,14 @@ export function useScheduleForm() {
     return getSessionTimeLabels('afternoon', scheduleSettings.afternoon.runCount)
   }
 
+  function getEtfMorningRunTimes() {
+    return getSessionTimeLabels('etfMorning', scheduleSettings.etfMorning.runCount)
+  }
+
+  function getEtfAfternoonRunTimes() {
+    return getSessionTimeLabels('etfAfternoon', scheduleSettings.etfAfternoon.runCount)
+  }
+
   return {
     scheduleSettings,
     fixedTaskTimeOptions: FIXED_TASK_TIME_OPTIONS,
@@ -248,5 +301,7 @@ export function useScheduleForm() {
     autoResizeTextarea,
     getMorningRunTimes,
     getAfternoonRunTimes,
+    getEtfMorningRunTimes,
+    getEtfAfternoonRunTimes,
   }
 }

@@ -35,6 +35,25 @@ def test_compute_next_run_at_returns_utc() -> None:
     assert result.tzinfo == timezone.utc
 
 
+def test_etf_schedule_reuses_trade_run_type() -> None:
+    schedule = StrategySchedule(
+        name="ETF上午运行1号",
+        run_type="",
+        cron_expression="0 10 * * 1-5",
+        task_prompt="ETF",
+        enabled=True,
+    )
+    run = StrategyRun(
+        trigger_source="schedule",
+        run_type="analysis",
+        schedule_name="ETF上午运行1号",
+        status="completed",
+    )
+
+    assert aniu_service._resolve_run_type(schedule) == "trade"
+    assert aniu_service._infer_run_type(run) == "trade"
+
+
 def test_compute_next_run_at_recomputes_future_time_in_utc() -> None:
     shanghai = ZoneInfo("Asia/Shanghai")
     start = datetime(2026, 4, 12, 8, 46, tzinfo=shanghai)
@@ -673,6 +692,92 @@ def test_execute_run_rolls_back_partial_trade_orders_when_order_persist_fails(
     assert len(runs) == 1
     assert runs[0].status == "failed"
     assert orders == []
+
+
+def test_execute_run_keeps_trade_order_when_email_alert_fails(
+    monkeypatch, tmp_path
+) -> None:
+    _use_temp_db(monkeypatch, tmp_path)
+    init_db()
+
+    from app.services import aniu_service as aniu_service_module
+
+    class StubClient:
+        def __init__(self, *args, **kwargs) -> None:
+            pass
+
+        def close(self) -> None:
+            pass
+
+    def fake_run_agent_with_messages(*, app_settings, client, messages, emit=None):
+        del app_settings, client, messages, emit
+        return (
+            {
+                "final_answer": "执行一笔交易",
+                "tool_calls": [
+                    {
+                        "name": "mx_moni_trade",
+                        "result": {
+                            "ok": True,
+                            "executed_action": {
+                                "action": "BUY",
+                                "symbol": "300059",
+                                "quantity": 100,
+                                "price_type": "MARKET",
+                            },
+                            "result": {"order_id": "A-1"},
+                        },
+                    }
+                ],
+            },
+            {"messages": []},
+            {"responses": []},
+            {"messages": []},
+        )
+
+    def failing_send_trade_alert(**kwargs):
+        raise RuntimeError("smtp boom")
+
+    monkeypatch.setattr(aniu_service_module, "MXClient", StubClient)
+    monkeypatch.setattr(
+        aniu_service_module.llm_service,
+        "run_agent_with_messages",
+        fake_run_agent_with_messages,
+    )
+    monkeypatch.setattr(
+        aniu_service_module.aniu_service,
+        "get_or_create_settings",
+        lambda db: type(
+            "StubSettings",
+            (),
+            {
+                "id": 1,
+                "mx_api_key": "demo-key",
+                "llm_base_url": "https://example.com/v1",
+                "llm_api_key": "token",
+                "llm_model": "demo-model",
+                "system_prompt": "prompt",
+                "timeout_seconds": 1800,
+                "task_prompt": "请执行测试交易。",
+            },
+        )(),
+    )
+    monkeypatch.setattr(
+        aniu_service_module.email_notification_service,
+        "send_trade_alert",
+        failing_send_trade_alert,
+    )
+
+    run = aniu_service.execute_run(trigger_source="manual")
+
+    with session_scope() as db:
+        orders = db.query(TradeOrder).all()
+
+    _reset_db_state()
+
+    assert run.status == "completed"
+    assert len(orders) == 1
+    assert orders[0].symbol == "300059"
 
 
 def test_trading_calendar_service_can_fill_missing_year(monkeypatch, tmp_path) -> None:

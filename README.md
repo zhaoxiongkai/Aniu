@@ -74,7 +74,7 @@ docker pull ghcr.io/anacondakc/aniu:latest
 
 docker run -d \
   --name aniu \
-  -p 8000:8000 \
+  -p 9000:9000 \
   --env-file .env.docker \
   -v "$(pwd)/data:/app/data" \
   ghcr.io/anacondakc/aniu:latest
@@ -82,7 +82,7 @@ docker run -d \
 
 #### 4. 登录并配置
 
-访问 `http://<主机IP>:8000`，使用密码登录后，在「功能设置」中填写：
+访问 `http://<主机IP>:9000`，使用密码登录后，在「功能设置」中填写：
 
 - `OpenAI API Key`
 - `OpenAI Base URL`
@@ -107,10 +107,10 @@ cd backend
 python3 -m venv .venv
 ./.venv/bin/pip install -r requirements.txt
 cp .env.example .env
-./.venv/bin/uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+./.venv/bin/uvicorn app.main:app --reload --host 0.0.0.0 --port 9000
 ```
 
-默认地址：`http://127.0.0.1:8000`
+默认地址：`http://127.0.0.1:9000`
 
 #### 前端启动
 
@@ -122,7 +122,7 @@ npm run dev
 
 默认地址：`http://127.0.0.1:3003`
 
-> Vite 开发时会自动将 `/api` 和 `/health` 代理到后端 `8000` 端口。
+> Vite 开发时会自动将 `/api` 和 `/health` 代理到后端 `9000` 端口。
 
 ---
 
@@ -195,10 +195,10 @@ cd frontend && npm run build
 cd backend && ./.venv/bin/pytest
 
 # 健康检查
-curl http://127.0.0.1:8000/health
+curl http://127.0.0.1:9000/health
 
 # 登录接口
-curl -X POST http://127.0.0.1:8000/api/aniu/login \
+curl -X POST http://127.0.0.1:9000/api/aniu/login \
   -H "Content-Type: application/json" \
   -d '{"password":"your-password"}'
 ```
