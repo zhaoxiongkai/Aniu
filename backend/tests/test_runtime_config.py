@@ -3,9 +3,13 @@ from __future__ import annotations
 from pathlib import Path
 import sys
 
+import pytest
+from pydantic import ValidationError
+
 sys.path.append(str(Path(__file__).resolve().parents[1]))
 
 from app.core.config import (
+    Settings,
     get_persistent_jwt_secret_file,
     get_runtime_data_dir,
     get_settings,
@@ -15,6 +19,21 @@ from app.core.config import (
 
 def _reset_settings_cache() -> None:
     get_settings.cache_clear()
+
+
+def test_default_jwt_lifetime_is_seven_days(monkeypatch) -> None:
+    monkeypatch.delenv("JWT_EXPIRE_HOURS", raising=False)
+    assert Settings(_env_file=None).jwt_expire_hours == 168
+
+
+def test_typesafe_model_default_override_and_invalid_value(monkeypatch) -> None:
+    monkeypatch.delenv("TYPESAFE_MODEL", raising=False)
+    assert Settings(_env_file=None).typesafe_model == "jev-1.13.0"
+    monkeypatch.setenv("TYPESAFE_MODEL", " jev-latest ")
+    assert Settings(_env_file=None).typesafe_model == "jev-latest"
+    monkeypatch.setenv("TYPESAFE_MODEL", "other-model")
+    with pytest.raises(ValidationError, match="TYPESAFE_MODEL"):
+        Settings(_env_file=None)
 
 
 def test_local_backend_runtime_uses_repo_level_runtime_data(monkeypatch, tmp_path) -> None:

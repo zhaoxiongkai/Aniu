@@ -15,11 +15,12 @@ metadata:
 ## 工具总览
 
 - `mx_query_market`：权威行情 / 财务 / 关系类结构化数据查询
+- `mx_etf_order_preview`：本账户历史接受的沪市ETF只读行情与100份、0.001元限价预览；预览本身不提交委托
 - `mx_search_news`：金融资讯、研报、公告、政策检索
 - `mx_screen_stocks`：自然语言选股
 - `mx_get_positions` / `mx_get_balance` / `mx_get_orders`：模拟组合持仓、资金、委托
 - `mx_get_self_selects` / `mx_manage_self_select`：自选股读取与维护
-- `mx_moni_trade` / `mx_moni_cancel`：A 股模拟交易下单与撤单
+- `mx_moni_trade` / `mx_moni_cancel`：经安全网关的A股及历史验证ETF限价模拟交易；撤单仍按服务端策略禁用
 
 ## 使用建议
 

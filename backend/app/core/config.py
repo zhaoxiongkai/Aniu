@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import secrets
 import shutil
+import re
 from functools import lru_cache
 from pathlib import Path
 
@@ -11,6 +12,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 _SKILL_WORKSPACE_DIRNAME = "skill_workspace"
 _JWT_SECRET_FILENAME = "jwt_secret.txt"
+DEFAULT_TYPESAFE_MODEL = "jev-1.13.0"
 
 
 class Settings(BaseSettings):
@@ -28,6 +30,8 @@ class Settings(BaseSettings):
     )
 
     mx_apikey: str | None = Field(default=None, alias="MX_APIKEY")
+    typesafe_api_key: str | None = Field(default=None, alias="TYPESAFE_API_KEY")
+    typesafe_model: str = Field(default=DEFAULT_TYPESAFE_MODEL, alias="TYPESAFE_MODEL")
     mx_api_url: str = Field(
         default="https://mkapi2.dfcfs.com/finskillshub", alias="MX_API_URL"
     )
@@ -43,7 +47,7 @@ class Settings(BaseSettings):
     scheduler_poll_seconds: int = Field(default=15, alias="SCHEDULER_POLL_SECONDS")
     app_login_password: str | None = Field(default=None, alias="APP_LOGIN_PASSWORD")
     jwt_secret: str | None = Field(default=None, alias="JWT_SECRET")
-    jwt_expire_hours: int = Field(default=24, alias="JWT_EXPIRE_HOURS")
+    jwt_expire_hours: int = Field(default=168, alias="JWT_EXPIRE_HOURS")
     trust_x_forwarded_for: bool = Field(
         default=False,
         alias="TRUST_X_FORWARDED_FOR",
@@ -62,6 +66,7 @@ class Settings(BaseSettings):
 
     @field_validator(
         "mx_apikey",
+        "typesafe_api_key",
         "openai_base_url",
         "openai_api_key",
         "app_login_password",
@@ -84,6 +89,14 @@ class Settings(BaseSettings):
         if not value or (isinstance(value, str) and not value.strip()):
             return None
         return str(value).strip()
+
+    @field_validator("typesafe_model")
+    @classmethod
+    def validate_typesafe_model(cls, value: str) -> str:
+        model = value.strip()
+        if not re.fullmatch(r"jev-(?:\d+\.\d+\.\d+|latest|preview)", model):
+            raise ValueError("TYPESAFE_MODEL must be a versioned Jev ID or jev-latest/jev-preview")
+        return model
 
     @field_validator("cors_allow_origins", mode="before")
     @classmethod

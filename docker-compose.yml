@@ -7,6 +7,8 @@ services:
     restart: unless-stopped
     ports:
       - "9000:9000"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     env_file:
       - .env.docker
     volumes:

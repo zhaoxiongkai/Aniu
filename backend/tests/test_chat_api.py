@@ -1,10 +1,11 @@
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
 import sys
 from zoneinfo import ZoneInfo
 
 from fastapi.testclient import TestClient
+import jwt
 import pytest
 
 sys.path.append(str(Path(__file__).resolve().parents[1]))
@@ -51,16 +52,23 @@ def _auth_headers(client: TestClient) -> dict[str, str]:
 
 
 def test_login_endpoint_accepts_configured_credentials(monkeypatch, tmp_path) -> None:
+    monkeypatch.setenv("JWT_EXPIRE_HOURS", "168")
+    before = datetime.now(timezone.utc)
     with create_test_client(monkeypatch, tmp_path) as client:
         response = client.post(
             "/api/aniu/login",
             json={"password": "release-pass"},
-    )
+        )
+    after = datetime.now(timezone.utc)
 
     assert response.status_code == 200
     payload = response.json()
     assert payload["authenticated"] is True
     assert payload["token"]
+    decoded = jwt.decode(payload["token"], get_settings().jwt_secret, algorithms=["HS256"])
+    expires = datetime.fromtimestamp(decoded["exp"], timezone.utc)
+    assert before + timedelta(days=7) - timedelta(seconds=1) <= expires
+    assert expires <= after + timedelta(days=7)
     database_module._engine = None
     database_module._session_local = None
     get_settings.cache_clear()
@@ -361,16 +369,16 @@ def test_chat_tools_available_for_chat_run_type(monkeypatch, tmp_path) -> None:
         }
 
     assert "read_file" in tool_names
-    assert "write_file" in tool_names
-    assert "edit_file" in tool_names
+    assert "write_file" not in tool_names
+    assert "edit_file" not in tool_names
     assert "list_dir" in tool_names
     assert "glob" in tool_names
     assert "grep" in tool_names
-    assert "exec" in tool_names
+    assert "exec" not in tool_names
     assert "web_search" in tool_names
     assert "web_fetch" in tool_names
-    assert "http_get" in tool_names
-    assert "http_post" in tool_names
+    assert "http_get" not in tool_names
+    assert "http_post" not in tool_names
     assert "file_read" not in tool_names
     assert "file_write" not in tool_names
     assert "file_list" not in tool_names
@@ -387,9 +395,9 @@ def test_chat_tools_available_for_chat_run_type(monkeypatch, tmp_path) -> None:
     assert "mx_get_balance" in tool_names
     assert "mx_get_orders" in tool_names
     assert "mx_get_self_selects" in tool_names
-    assert "mx_manage_self_select" in tool_names
-    assert "mx_moni_trade" in tool_names
-    assert "mx_moni_cancel" in tool_names
+    assert "mx_manage_self_select" not in tool_names
+    assert "mx_moni_trade" not in tool_names
+    assert "mx_moni_cancel" not in tool_names
     database_module._engine = None
     database_module._session_local = None
     get_settings.cache_clear()

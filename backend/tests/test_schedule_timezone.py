@@ -54,6 +54,26 @@ def test_etf_schedule_reuses_trade_run_type() -> None:
     assert aniu_service._infer_run_type(run) == "trade"
 
 
+def test_disabled_trade_schedule_cannot_be_manually_started(monkeypatch, tmp_path) -> None:
+    _use_temp_db(monkeypatch, tmp_path)
+    init_db()
+    with session_scope() as db:
+        schedule = StrategySchedule(
+            name="ETF下午运行1号", run_type="trade", task_prompt="ETF",
+            cron_expression="30 14 * * 1-5", enabled=False,
+        )
+        db.add(schedule)
+        db.flush()
+        schedule_id = schedule.id
+    try:
+        with pytest.raises(RuntimeError, match="已关闭"):
+            aniu_service._prepare_run(trigger_source="manual", schedule_id=schedule_id)
+        with session_scope() as db:
+            assert not db.query(StrategyRun).all()
+    finally:
+        _reset_db_state()
+
+
 def test_compute_next_run_at_recomputes_future_time_in_utc() -> None:
     shanghai = ZoneInfo("Asia/Shanghai")
     start = datetime(2026, 4, 12, 8, 46, tzinfo=shanghai)
@@ -891,6 +911,84 @@ def test_order_status_text_derives_from_fill_progress() -> None:
     assert _order_status_text(2, order_quantity=200, filled_quantity=0) == "已报"
     assert _order_status_text("2", order_quantity=200, filled_quantity=100) == "部分成交"
     assert _order_status_text("2", order_quantity=200, filled_quantity=200) == "已成交"
+
+
+def test_order_status_text_uses_documented_vendor_lifecycle() -> None:
+    from app.services.aniu_service import _order_status_text
+
+    expected = {
+        1: "未报",
+        2: "已报",
+        3: "部分成交",
+        4: "已成交",
+        5: "部分成交待撤",
+        6: "已报待撤",
+        7: "部分撤单",
+        8: "已撤单",
+        9: "废单",
+        10: "撤单失败",
+    }
+    for status, label in expected.items():
+        assert _order_status_text(status) == label
+        assert _order_status_text(str(status)) == label
+
+    assert _order_status_text(8, order_quantity=200, filled_quantity=100) == "部分成交后撤单"
+    assert _order_status_text(9, order_quantity=200, filled_quantity=200) == "废单"
+    assert _order_status_text(None, db_status=206) == "原始状态 206（待核实）"
+    assert _order_status_text(200) == "状态码 200（待核实）"
+
+
+def test_trade_detail_status_does_not_claim_submission_was_filled() -> None:
+    from app.services.aniu_service import AniuService
+
+    resolve = AniuService()._resolve_trade_detail_status
+    assert resolve("submitted") == ("done", None)
+    assert resolve("response_received") == ("done", None)
+    assert resolve("ambiguous") == ("done", None)
+    assert resolve(None) == ("done", None)
+    assert resolve("reserved") == ("running", None)
+    assert resolve("filled") == ("done", True)
+    assert resolve("4") == ("done", True)
+    assert resolve("rejected") == ("failed", False)
+    assert resolve("9") == ("failed", False)
+
+
+def test_trade_detail_text_distinguishes_submission_from_filled_or_unknown() -> None:
+    from app.services.aniu_service import AniuService
+
+    describe = AniuService()._trade_detail_status_text
+    assert describe("submitted") == "已提交·成交待核实"
+    assert describe("response_received") == "已提交·成交待核实"
+    assert describe("ambiguous") == "提交结果未知·需人工核对"
+    assert describe("filled") == "已成交"
+    assert describe("4") == "已成交"
+    assert describe("8") == "已撤单"
+    assert describe("9") == "废单"
+    assert describe("some_new_status") == "状态待核实"
+
+
+def test_run_trade_detail_exposes_unverified_submission_status() -> None:
+    from types import SimpleNamespace
+
+    from app.schemas.aniu import TradeDetailRead
+    from app.services.aniu_service import AniuService
+
+    service = AniuService()
+    service._get_detail_tool_calls = lambda run: []  # type: ignore[method-assign]
+    run = SimpleNamespace(
+        trade_orders=[
+            SimpleNamespace(
+                action="BUY", symbol="600000.SH", quantity=100,
+                price=12.5, response_payload={}, status="submitted",
+            )
+        ]
+    )
+    detail = service._build_run_trade_details(run)[0]
+    serialized = TradeDetailRead.model_validate(detail).model_dump()
+
+    assert serialized["status_text"] == "已提交·成交待核实"
+    assert serialized["ok"] is None
+    assert serialized["status"] == "done"
 
 
 def test_account_overview_prefers_live_positions_over_cached_snapshot(monkeypatch) -> None:

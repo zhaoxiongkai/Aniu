@@ -1,8 +1,9 @@
 import { computed, effectScope, reactive, ref, watch } from 'vue'
 
 import { api, getStoredToken } from '@/services/api'
-import type { ApiDetail, TradeDetail } from '@/types'
+import type { ApiDetail, RunDetail, TradeDetail } from '@/types'
 import { parseSseChunk } from '@/utils/sse'
+import { resolveTradeStatus } from '@/utils/tradeStatus'
 
 const PERSIST_KEY = 'aniu.runstream.v2'
 const MAX_EVENT_BUFFER = 300
@@ -131,7 +132,6 @@ function createRunStream() {
   const pendingTradeDetails: TradeDetail[] = []
 
   type ApiDetailStatus = NonNullable<ApiDetail['status']>
-  type TradeDetailStatus = NonNullable<TradeDetail['status']>
 
   function nextStreamKey(prefix: 'api' | 'trade') {
     streamItemSerial += 1
@@ -459,14 +459,6 @@ function createRunStream() {
     })
   }
 
-  function resolveTradeDetailStatus(value: unknown): TradeDetailStatus {
-    const text = String(value ?? '').trim().toLowerCase()
-    if (text && ['fail', 'error', 'reject'].some((flag) => text.includes(flag))) {
-      return 'failed'
-    }
-    return 'done'
-  }
-
   function applyTradeOrderEvent(event: RunStreamEvent) {
     const actionName = String(event.action || '').toUpperCase()
     const tradeAction = actionName === 'SELL' ? 'sell' : 'buy'
@@ -474,14 +466,14 @@ function createRunStream() {
     const volume = Number(event.quantity ?? 0)
     const price = event.price == null ? null : Number(event.price)
     const amount = price == null ? null : Number((price * volume).toFixed(2))
-    const tradeStatus = resolveTradeDetailStatus(event.status)
+    const tradeStatus = resolveTradeStatus(event.status)
 
     state.stage = 'trade'
     state.status = 'running'
     state.stageMessage = '正在记录交易执行结果...'
     enqueueTradeDetail({
       action: tradeAction,
-      action_text: tradeAction === 'sell' ? '模拟卖出' : '模拟买入',
+      action_text: tradeAction === 'sell' ? '卖出委托' : '买入委托',
       symbol,
       name: symbol,
       volume,
@@ -490,10 +482,50 @@ function createRunStream() {
       summary: `挂单${tradeAction === 'sell' ? '卖出' : '买入'}${symbol}共计${volume}股。`,
       tool_name: null,
       preview_index: null,
-      status: tradeStatus,
-      ok: tradeStatus !== 'failed',
+      ...tradeStatus,
       stream_key: nextStreamKey('trade'),
     })
+  }
+
+  function applyTerminalDetail(detail: RunDetail) {
+    const completed = detail.status === 'completed'
+    state.status = completed ? 'completed' : 'failed'
+    state.stage = completed ? 'completed' : 'failed'
+    state.stageMessage = completed ? '任务完成' : '任务失败'
+    state.errorMessage = completed ? '' : detail.error_message || '任务失败'
+    state.finalStarted = true
+    state.finalStreaming = false
+    state.finalAnswer = String(detail.final_answer || detail.output_markdown || '')
+    clearRevealTimers()
+    pendingApiDetails.length = 0
+    pendingTradeDetails.length = 0
+    state.apiDetails = Array.isArray(detail.api_details) ? detail.api_details : []
+    state.tradeDetails = Array.isArray(detail.trade_details) ? detail.trade_details : []
+    manualRunning.value = false
+    pendingPostRunId.value = detail.id
+    writePersisted(null)
+  }
+
+  async function recoverUnexpectedStreamEnd(id: number, reason: string) {
+    if (runId.value !== id || !['connecting', 'running'].includes(state.status)) return
+    try {
+      const detail = await api.getRun(id)
+      if (runId.value !== id) return
+      if (['completed', 'failed', 'error'].includes(detail.status)) {
+        applyTerminalDetail(detail)
+        return
+      }
+    } catch (error) {
+      console.warn('[useRunStream] terminal state recovery failed', error)
+    }
+    if (runId.value !== id) return
+    state.status = 'error'
+    state.stage = 'error'
+    state.stageMessage = '事件流已中断'
+    state.errorMessage = reason
+    state.finalStreaming = false
+    manualRunning.value = false
+    writePersisted(null)
   }
 
   async function start(id: number, options?: StartOptions): Promise<void> {
@@ -556,14 +588,10 @@ function createRunStream() {
           idx = buffer.indexOf('\n\n')
         }
       }
+      await recoverUnexpectedStreamEnd(id, '事件流意外结束，任务状态尚未确认；请刷新运行记录。')
     } catch (err) {
       if ((err as DOMException)?.name === 'AbortError') return
-      state.status = 'error'
-      state.stage = 'error'
-      state.stageMessage = '事件流已中断'
-      state.errorMessage = (err as Error).message || '事件流中断'
-      state.finalStreaming = false
-      manualRunning.value = false
+      await recoverUnexpectedStreamEnd(id, (err as Error).message || '事件流中断')
       console.error('[useRunStream] stream error', err)
     }
   }
@@ -658,19 +686,7 @@ function createRunStream() {
         const status = String(detail?.status || '').toLowerCase()
         const terminal = status === 'completed' || status === 'failed' || status === 'error'
         if (terminal) {
-          state.status = status === 'completed' ? 'completed' : 'failed'
-          state.stage = status === 'completed' ? 'completed' : 'failed'
-          state.stageMessage = status === 'completed' ? '任务完成' : '任务失败'
-          state.finalStarted = true
-          state.finalStreaming = false
-          state.finalAnswer = String(detail?.final_answer || detail?.output_markdown || '')
-          clearRevealTimers()
-          pendingApiDetails.length = 0
-          pendingTradeDetails.length = 0
-          state.apiDetails = Array.isArray(detail?.api_details) ? detail.api_details : []
-          state.tradeDetails = Array.isArray(detail?.trade_details) ? detail.trade_details : []
-          manualRunning.value = false
-          writePersisted(null)
+          applyTerminalDetail(detail)
         } else {
           void start(id, {
             startedAt: persisted.liveStartedAt ?? Date.now(),

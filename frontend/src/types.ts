@@ -6,6 +6,10 @@ export interface AppSettings {
   llm_api_key: string | null
   llm_model: string
   automation_context_window_tokens: number | null
+  trade_enabled: boolean
+  risk_cash_only: boolean
+  risk_max_order_value: number | null
+  risk_max_daily_value: number | null
   system_prompt: string
   created_at: string
   updated_at: string
@@ -54,6 +58,26 @@ export interface RunDetail extends RunSummary {
   llm_response_payload: Record<string, unknown> | null
   skill_payloads: Record<string, unknown> | null
   trade_orders: TradeOrder[]
+  jev_assessments: JevAssessment[]
+}
+
+export interface JevAssessment {
+  id: number
+  intent_id: number
+  action: string
+  symbol: string
+  as_of: string
+  evidence_count: number
+  status: string
+  question_set: string
+  model_requested: string
+  model_used: string | null
+  probabilities: Record<string, number> | null
+  usage: Record<string, number> | null
+  latency_ms: number | null
+  error_code: string | null
+  created_at: string
+  finished_at: string | null
 }
 
 export interface ApiDetail {
@@ -92,6 +116,7 @@ export interface TradeDetail {
   tool_name: string | null
   preview_index: number | null
   status?: 'running' | 'done' | 'failed' | null
+  status_text?: string | null
   ok?: boolean | null
   stream_key?: string | null
 }

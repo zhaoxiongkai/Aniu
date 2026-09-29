@@ -63,6 +63,14 @@ def _ensure_app_settings_columns(engine) -> None:
     statements: list[str] = []
     if "mx_api_key" not in columns:
         statements.append("ALTER TABLE app_settings ADD COLUMN mx_api_key VARCHAR(255)")
+    if "risk_max_order_value" not in columns:
+        statements.append("ALTER TABLE app_settings ADD COLUMN risk_max_order_value FLOAT")
+    if "risk_max_daily_value" not in columns:
+        statements.append("ALTER TABLE app_settings ADD COLUMN risk_max_daily_value FLOAT")
+    if "risk_cash_only" not in columns:
+        statements.append("ALTER TABLE app_settings ADD COLUMN risk_cash_only BOOLEAN DEFAULT 0")
+    if "risk_max_order_value" not in columns or "risk_max_daily_value" not in columns:
+        statements.append("UPDATE app_settings SET trade_enabled = 0")
     if "disabled_skill_ids_json" not in columns:
         statements.append(
             "ALTER TABLE app_settings ADD COLUMN disabled_skill_ids_json TEXT DEFAULT '[]'"
@@ -233,6 +241,20 @@ def _backfill_strategy_run_types(engine) -> None:
     connection = sqlite3.connect(db_path)
     connection.row_factory = sqlite3.Row
     try:
+        # The historical inference scans potentially large JSON columns. Complete it
+        # once per database; the marker and row updates share a transaction so an
+        # interrupted migration is retried rather than silently skipped.
+        connection.execute("BEGIN IMMEDIATE")
+        connection.execute(
+            "CREATE TABLE IF NOT EXISTS app_migrations (name TEXT PRIMARY KEY)"
+        )
+        migration_name = "strategy_run_types_v1"
+        if connection.execute(
+            "SELECT 1 FROM app_migrations WHERE name = ?", (migration_name,)
+        ).fetchone():
+            connection.commit()
+            return
+
         runs = connection.execute(
             "SELECT id, run_type, schedule_name, executed_actions, skill_payloads, decision_payload FROM strategy_runs"
         ).fetchall()
@@ -289,12 +311,19 @@ def _backfill_strategy_run_types(engine) -> None:
                     elif stored_run_type in {"analysis", "trade"}:
                         inferred = stored_run_type
 
-            connection.execute(
-                "UPDATE strategy_runs SET run_type = ? WHERE id = ?",
-                (inferred, int(row["id"])),
-            )
+            if inferred != stored_run_type:
+                connection.execute(
+                    "UPDATE strategy_runs SET run_type = ? WHERE id = ?",
+                    (inferred, int(row["id"])),
+                )
 
+        connection.execute(
+            "INSERT INTO app_migrations (name) VALUES (?)", (migration_name,)
+        )
         connection.commit()
+    except Exception:
+        connection.rollback()
+        raise
     finally:
         connection.close()
 

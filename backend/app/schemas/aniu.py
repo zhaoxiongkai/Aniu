@@ -20,6 +20,10 @@ class AppSettingsBase(BaseModel):
     llm_base_url: str | None = Field(default=None, max_length=512)
     llm_api_key: str | None = Field(default=None, max_length=512)
     llm_model: str = Field(default="gpt-4o-mini", max_length=128)
+    trade_enabled: bool = False
+    risk_cash_only: bool = False
+    risk_max_order_value: float | None = Field(default=None, gt=0, allow_inf_nan=False)
+    risk_max_daily_value: float | None = Field(default=None, gt=0, allow_inf_nan=False)
     system_prompt: str = Field(max_length=20000)
     automation_session_id: int | None = None
     automation_context_window_tokens: int | None = Field(default=128000, ge=4096)
@@ -43,7 +47,17 @@ class AppSettingsRead(AppSettingsBase):
 
 
 class AppSettingsUpdate(AppSettingsBase):
-    pass
+    @model_validator(mode="after")
+    def require_risk_policy_when_enabled(self) -> "AppSettingsUpdate":
+        if self.risk_cash_only and (
+            self.risk_max_order_value is not None or self.risk_max_daily_value is not None
+        ):
+            raise ValueError("Cash-only mode cannot have monetary limits.")
+        if self.trade_enabled and not self.risk_cash_only and (
+            self.risk_max_order_value is None or self.risk_max_daily_value is None
+        ):
+            raise ValueError("Enabling capped trading requires both risk limits.")
+        return self
 
 
 class SkillListItemRead(BaseModel):
@@ -158,6 +172,7 @@ class TradeDetailRead(BaseModel):
     tool_name: str | None = None
     preview_index: int | None = None
     status: Literal["running", "done", "failed"] | None = None
+    status_text: str | None = None
     ok: bool | None = None
 
 
@@ -186,6 +201,27 @@ class RunSummaryRead(BaseModel):
     finished_at: datetime | None = None
 
 
+class JevAssessmentRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    intent_id: int
+    action: str
+    symbol: str
+    as_of: str
+    evidence_count: int
+    status: str
+    question_set: str
+    model_requested: str
+    model_used: str | None = None
+    probabilities: dict[str, float] | None = None
+    usage: dict[str, int] | None = None
+    latency_ms: int | None = None
+    error_code: str | None = None
+    created_at: datetime
+    finished_at: datetime | None = None
+
+
 class RunDetailRead(RunSummaryRead):
     model_config = ConfigDict(from_attributes=True)
 
@@ -200,6 +236,7 @@ class RunDetailRead(RunSummaryRead):
     llm_response_payload: dict[str, Any] | None = None
     skill_payloads: dict[str, Any] | None = None
     trade_orders: list[TradeOrderRead] = Field(default_factory=list)
+    jev_assessments: list[JevAssessmentRead] = Field(default_factory=list)
 
 
 class RunSummaryPageRead(BaseModel):

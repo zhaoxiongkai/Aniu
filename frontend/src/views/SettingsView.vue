@@ -48,13 +48,40 @@
           </div>
         </div>
 
+        <div class="trade-risk-settings">
+          <h3>模拟交易风控</h3>
+          <p class="field-help">默认暂停交易。选择资金/持仓约束或金额限额模式并启用开关，只是提交权限的前置条件；每笔委托还须通过交易日、时段、可信行情时效等后端校验。</p>
+          <label class="trade-risk-toggle">
+            <input v-model="settings.risk_cash_only" type="checkbox" @change="onRiskModeChange" />
+            <span>仅以可用资金和可卖持仓约束（不设单笔、单日金额上限）</span>
+          </label>
+          <p class="field-help">此模式不代表无风险或保证成交；买入仍须有足够可用资金，卖出仍须有足够可卖份额。</p>
+          <div class="settings-inline-fields">
+            <label class="field">
+              <span>单笔委托金额上限（元）</span>
+              <input v-model.number="settings.risk_max_order_value" type="number" min="0.01" step="0.01" placeholder="由你填写" :disabled="settings.risk_cash_only" />
+            </label>
+            <label class="field">
+              <span>单日委托金额上限（元）</span>
+              <input v-model.number="settings.risk_max_daily_value" type="number" min="0.01" step="0.01" placeholder="由你填写" :disabled="settings.risk_cash_only" />
+            </label>
+          </div>
+          <label class="trade-risk-toggle">
+            <input v-model="settings.trade_enabled" type="checkbox" :disabled="!riskPolicyValid && !settings.trade_enabled" />
+            <span>明确启用模拟交易委托</span>
+          </label>
+          <p class="field-help" role="status">{{ savedTradePolicy === null ? '正在读取服务器交易配置…' : savedTradePolicy.trade_enabled ? '服务器配置：交易权限已启用。' : '服务器配置：交易权限已停用。' }}{{ savedTradePolicy === null ? '' : savedTradePolicy.risk_cash_only ? ' 风控模式：资金/持仓约束。' : ' 风控模式：金额限额。' }}{{ tradePolicyDirty ? ' 当前修改尚未保存。' : '' }}</p>
+          <p class="field-help">后端仅接受带可验证时间戳的新鲜行情；保存启用不代表可以下单或已经成交。</p>
+          <p v-if="settings.trade_enabled && !riskPolicyValid" class="inline-warning">金额限额模式下，两个限额都必须大于 0，才能启用交易。</p>
+        </div>
+
         <div v-if="errorMessage" class="error-banner">{{ errorMessage }}</div>
 
         <div class="panel-actions">
           <button
             class="button primary"
             :class="{ 'is-loading': busy }"
-            :disabled="busy"
+            :disabled="busy || (settings.trade_enabled && !riskPolicyValid)"
             @click="saveSettings"
           >
             保存设置
@@ -207,7 +234,7 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { storeToRefs } from 'pinia'
 
 import { useSkillManager } from '@/composables/useSkillManager'
@@ -215,8 +242,28 @@ import { useAppStore } from '@/stores/legacy'
 import type { SkillListItem } from '@/types'
 
 const store = useAppStore()
-const { settings, busy, errorMessage } = storeToRefs(store)
+const { settings, savedTradePolicy, busy, errorMessage } = storeToRefs(store)
 const { saveSettings } = store
+const riskPolicyValid = computed(() =>
+  settings.value.risk_cash_only || (
+    Number(settings.value.risk_max_order_value) > 0
+    && Number(settings.value.risk_max_daily_value) > 0
+  ),
+)
+const tradePolicyDirty = computed(() => {
+  const saved = savedTradePolicy.value
+  if (!saved) return false
+  return settings.value.trade_enabled !== saved.trade_enabled
+    || settings.value.risk_cash_only !== saved.risk_cash_only
+    || (Number(settings.value.risk_max_order_value) || null) !== saved.risk_max_order_value
+    || (Number(settings.value.risk_max_daily_value) || null) !== saved.risk_max_daily_value
+})
+function onRiskModeChange() {
+  if (settings.value.risk_cash_only) {
+    settings.value.risk_max_order_value = null
+    settings.value.risk_max_daily_value = null
+  }
+}
 const {
   skills,
   importInput,
@@ -301,3 +348,27 @@ onMounted(async () => {
   }
 })
 </script>
+
+<style scoped>
+.trade-risk-settings {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 16px;
+  margin-top: 20px;
+  border: 1px solid rgba(145, 170, 214, 0.2);
+  border-radius: 8px;
+}
+
+.trade-risk-settings h3,
+.trade-risk-settings p {
+  margin: 0;
+}
+
+.trade-risk-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+}
+</style>

@@ -7,6 +7,39 @@ from app.skills.catalog import SkillCatalog
 from app.skills.policy import SkillPolicy
 
 
+_READ_ONLY_TOOLS = frozenset({
+    "read_file", "list_dir", "glob", "grep", "web_search", "web_fetch",
+    "mx_query_market", "mx_etf_order_preview", "mx_search_news", "mx_screen_stocks", "mx_get_positions",
+    "mx_get_balance", "mx_get_orders", "mx_get_self_selects",
+    "chat_get_account_summary", "chat_get_positions", "chat_get_orders",
+    "chat_list_runs", "chat_get_run_detail",
+})
+_TRADE_TOOLS = frozenset({"mx_moni_trade"})
+_BUILTIN_RUNTIME_TOOLS = frozenset({
+    "read_file", "list_dir", "glob", "grep", "web_search", "web_fetch",
+})
+_BUILTIN_CHAT_TOOLS = frozenset({
+    "chat_get_account_summary", "chat_get_positions", "chat_get_orders",
+    "chat_list_runs", "chat_get_run_detail",
+})
+
+
+def _tool_allowed(tool_name: str, run_type: str) -> bool:
+    return tool_name in _READ_ONLY_TOOLS or (
+        run_type == "trade" and tool_name in _TRADE_TOOLS
+    )
+
+
+def _trusted_owner(pkg: Any, tool_name: str) -> bool:
+    if pkg.source != "builtin":
+        return False
+    if pkg.id == "builtin_utils":
+        return tool_name in _BUILTIN_RUNTIME_TOOLS
+    if pkg.id == "chat_context":
+        return tool_name in _BUILTIN_CHAT_TOOLS
+    return pkg.id == "mx_core" and tool_name.startswith("mx_")
+
+
 class SkillRuntime:
     def __init__(self, *, catalog: SkillCatalog, policy: SkillPolicy) -> None:
         self._catalog = catalog
@@ -25,7 +58,8 @@ class SkillRuntime:
                 continue
             for spec in pkg.skill.tools_for(rt):
                 name = spec.get("function", {}).get("name")
-                if not name or name in seen_names:
+                if (not name or name in seen_names or not _tool_allowed(name, rt)
+                        or not _trusted_owner(pkg, name)):
                     continue
                 seen_names.add(name)
                 collected.append(spec)
@@ -38,10 +72,21 @@ class SkillRuntime:
         arguments: dict[str, Any],
         context: dict[str, Any],
     ) -> dict[str, Any]:
+        run_type = str(context.get("run_type") or "analysis").strip()
+        if any(
+            tool_name in pkg.skill.tool_names()
+            for pkg in self._catalog.enabled_packages()
+            if pkg.skill is not None
+        ) and not _tool_allowed(tool_name, run_type):
+            return {
+                "ok": False,
+                "tool_name": tool_name,
+                "error": f"Tool {tool_name} is disabled for {run_type} runs by server policy.",
+            }
         for pkg in self._catalog.enabled_packages():
             if pkg.skill is None:
                 continue
-            if tool_name in pkg.skill.tool_names():
+            if tool_name in pkg.skill.tool_names() and _trusted_owner(pkg, tool_name):
                 try:
                     return pkg.skill.handle(
                         tool_name=tool_name,

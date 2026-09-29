@@ -78,7 +78,7 @@ test('buildPayload preserves disabled session schedules', () => {
   assert.equal(morningRuns.every((item) => item.enabled === false), true)
 })
 
-test('buildPayload creates ETF trade schedules with fixed investment prompt', () => {
+test('buildPayload creates ETF trade schedules without the obsolete fixed cap', () => {
   const { scheduleSettings, buildPayload } = useScheduleForm()
 
   scheduleSettings.etfMorning.enabled = true
@@ -89,7 +89,9 @@ test('buildPayload creates ETF trade schedules with fixed investment prompt', ()
 
   assert.equal(etfRuns.length, 3)
   assert.equal(etfRuns.every((item) => item.run_type === 'trade'), true)
-  assert.equal(etfRuns.every((item) => item.task_prompt.includes('单次ETF可投资金额上限1000元')), true)
+  assert.equal(etfRuns.every((item) => item.task_prompt.includes('买入不得超过可用资金')), true)
+  assert.equal(etfRuns.every((item) => item.task_prompt.includes('不设单次或单日固定金额上限')), true)
+  assert.equal(etfRuns.every((item) => !item.task_prompt.includes('1000元')), true)
 })
 
 test('syncFromSchedules keeps stock and ETF session schedules separate', () => {

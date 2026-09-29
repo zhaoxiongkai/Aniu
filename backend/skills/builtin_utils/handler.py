@@ -62,7 +62,18 @@ _SEARCH_RESULT_RE = re.compile(
     re.IGNORECASE | re.DOTALL,
 )
 _SNIPPET_RE = re.compile(
-    r'<a[^>]+class="result__a"[^>]+>.*?</a>.*?(?:<a[^>]+class="result__snippet"|<div[^>]+class="result__snippet"|<span[^>]+class="result__snippet")(?P<snippet>.*?)</(?:a|div|span)>',
+    r'<a[^>]+class="result__a"[^>]+>.*?</a>.*?(?:<a[^>]+class="result__snippet"[^>]*>|<div[^>]+class="result__snippet"[^>]*>|<span[^>]+class="result__snippet"[^>]*>)(?P<snippet>.*?)</(?:a|div|span)>',
+    re.IGNORECASE | re.DOTALL,
+)
+_BING_RESULT_RE = re.compile(
+    r'<li[^>]+class="[^"]*\bb_algo\b[^"]*"[^>]*>.*?'
+    r'<h2[^>]*>\s*<a[^>]+href="(?P<href>[^"]+)"[^>]*>'
+    r'(?P<title>.*?)</a>.*?</h2>(?P<body>.*?)(?=<li\b|</ol>|</ul>|$)',
+    re.IGNORECASE | re.DOTALL,
+)
+_BING_SNIPPET_RE = re.compile(
+    r'<(?:div|p)[^>]+class="[^"]*\bb_caption\b[^"]*"[^>]*>'
+    r'(?P<snippet>.*?)(?:</div>|</p>)',
     re.IGNORECASE | re.DOTALL,
 )
 
@@ -258,6 +269,39 @@ def _decode_result_url(raw_href: str) -> str:
         if target:
             return unquote(target[0])
     return html.unescape(raw_href)
+
+
+def _parse_duckduckgo_results(markup: str, *, count: int) -> list[dict[str, str]]:
+    items: list[dict[str, str]] = []
+    for match in list(_SEARCH_RESULT_RE.finditer(markup))[:count]:
+        href = _decode_result_url(match.group("href"))
+        title = _normalize_html_to_text(match.group("title"))
+        snippet_match = _SNIPPET_RE.search(markup, match.start())
+        snippet = (
+            _normalize_html_to_text(snippet_match.group("snippet"))
+            if snippet_match
+            else ""
+        )
+        items.append({"title": title, "url": href, "snippet": snippet})
+    return items
+
+
+def _parse_bing_results(markup: str, *, count: int) -> list[dict[str, str]]:
+    items: list[dict[str, str]] = []
+    for match in list(_BING_RESULT_RE.finditer(markup))[:count]:
+        snippet_match = _BING_SNIPPET_RE.search(match.group("body"))
+        items.append(
+            {
+                "title": _normalize_html_to_text(match.group("title")),
+                "url": html.unescape(match.group("href")),
+                "snippet": (
+                    _normalize_html_to_text(snippet_match.group("snippet"))
+                    if snippet_match
+                    else ""
+                ),
+            }
+        )
+    return items
 
 
 def _validate_remote_url(url: str) -> str | None:
@@ -1091,34 +1135,35 @@ class Skill(BaseSkill):
                     params={"q": query},
                     headers={"User-Agent": "Aniu/1.0"},
                 )
+            if response.status_code != 202:
+                response.raise_for_status()
+                items = _parse_duckduckgo_results(response.text or "", count=count)
+                if items:
+                    return _tool_ok(
+                        "web_search",
+                        f"Found {len(items)} search results for {query}",
+                        {
+                            "query": query,
+                            "provider": "duckduckgo-html",
+                            "items": items,
+                        },
+                    )
+        except Exception:  # noqa: BLE001
+            pass
+
+        try:
+            with httpx.Client(timeout=_DEFAULT_HTTP_TIMEOUT, follow_redirects=True) as client:
+                response = client.get(
+                    "https://www.bing.com/search",
+                    params={"q": query},
+                    headers={"User-Agent": "Aniu/1.0"},
+                )
             response.raise_for_status()
-            markup = response.text or ""
-            matches = list(_SEARCH_RESULT_RE.finditer(markup))
-            items: list[dict[str, str]] = []
-            for match in matches[:count]:
-                href = _decode_result_url(match.group("href"))
-                title = _normalize_html_to_text(match.group("title"))
-                snippet_match = _SNIPPET_RE.search(markup, match.start())
-                snippet = (
-                    _normalize_html_to_text(snippet_match.group("snippet"))
-                    if snippet_match
-                    else ""
-                )
-                items.append(
-                    {
-                        "title": title,
-                        "url": href,
-                        "snippet": snippet,
-                    }
-                )
+            items = _parse_bing_results(response.text or "", count=count)
             return _tool_ok(
                 "web_search",
                 f"Found {len(items)} search results for {query}",
-                {
-                    "query": query,
-                    "provider": "duckduckgo-html",
-                    "items": items,
-                },
+                {"query": query, "provider": "bing-html", "items": items},
             )
         except Exception as exc:  # noqa: BLE001
             return _tool_error("web_search", str(exc))

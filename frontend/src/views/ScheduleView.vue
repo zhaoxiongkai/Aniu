@@ -273,7 +273,7 @@
               <section class="schedule-section">
                 <header class="section-header">
                   <h3>ETF 投资任务</h3>
-                  <p class="section-subtitle">按股票交易任务的节奏执行 ETF 投资，单次金额上限由系统固定</p>
+                  <p class="section-subtitle">按交易日程执行 ETF 投资；资金和持仓约束由交易网关校验</p>
                 </header>
 
                 <div class="run-list">

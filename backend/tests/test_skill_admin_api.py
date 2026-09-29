@@ -134,7 +134,7 @@ def test_system_runtime_skill_cannot_be_disabled(monkeypatch, tmp_path) -> None:
             spec["function"]["name"] for spec in skill_registry.build_tools(run_type="chat")
         }
         assert "read_file" in tool_names
-        assert "exec" in tool_names
+        assert "exec" not in tool_names
 
         response = client.get("/api/aniu/skills", headers=headers)
         assert response.status_code == 200

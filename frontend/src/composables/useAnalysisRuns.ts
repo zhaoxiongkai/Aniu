@@ -1,6 +1,7 @@
 import { computed, ref, watch } from 'vue'
 
-import type { ApiDetail, RawToolPreview, RawToolPreviewDetail, RunDetail, RunSummary, RunSummaryPage, TradeDetail, TradeOrder } from '@/types'
+import type { ApiDetail, JevAssessment, RawToolPreview, RawToolPreviewDetail, RunDetail, RunSummary, RunSummaryPage, TradeDetail, TradeOrder } from '@/types'
+import { resolveTradeStatus } from '@/utils/tradeStatus'
 
 export interface AnalysisRunViewModel {
   id: number
@@ -18,6 +19,7 @@ export interface AnalysisRunViewModel {
   apiDetails: ApiDetail[]
   rawToolPreviews: RawToolPreview[]
   tradeDetails: TradeDetail[]
+  jevAssessments: JevAssessment[]
   output: string | null
   summary: string
   detailLoaded: boolean
@@ -193,14 +195,6 @@ function mapApiDetails(detail: RunDetail): ApiDetail[] {
     })
 }
 
-function resolveTradeDetailStatus(value: unknown): 'done' | 'failed' {
-  const text = String(value ?? '').trim().toLowerCase()
-  if (text && ['fail', 'error', 'reject'].some((flag) => text.includes(flag))) {
-    return 'failed'
-  }
-  return 'done'
-}
-
 function mapTradeDetails(tradeOrders: TradeOrder[], executedActions: Array<Record<string, unknown>> | null): TradeDetail[] {
   if (tradeOrders.length > 0) {
     return tradeOrders.map((order) => {
@@ -208,7 +202,7 @@ function mapTradeDetails(tradeOrders: TradeOrder[], executedActions: Array<Recor
       const action = String(order.action).toUpperCase() === 'SELL' ? 'sell' : 'buy'
       const name = extractTradeName(order.response_payload) || order.symbol
       const amount = price == null ? null : Number((price * order.quantity).toFixed(2))
-      const status = resolveTradeDetailStatus(order.status)
+      const tradeStatus = resolveTradeStatus(order.status)
       return {
         action,
         action_text: action === 'sell' ? '模拟卖出' : '模拟买入',
@@ -220,8 +214,7 @@ function mapTradeDetails(tradeOrders: TradeOrder[], executedActions: Array<Recor
         summary: getTradeSummary(action, order.symbol, name, order.quantity, price, amount),
         tool_name: null,
         preview_index: null,
-        status,
-        ok: status !== 'failed',
+        ...tradeStatus,
       }
     })
   }
@@ -236,7 +229,7 @@ function mapTradeDetails(tradeOrders: TradeOrder[], executedActions: Array<Recor
     const symbol = String(action.symbol ?? '--')
     const name = String(action.name ?? '').trim() || symbol
     const amount = price == null ? null : Number((price * volume).toFixed(2))
-    const status = resolveTradeDetailStatus(action.status)
+    const tradeStatus = resolveTradeStatus(action.status)
     return {
       action: actionType,
       action_text: actionName === 'SELL' ? '模拟卖出' : '模拟买入',
@@ -248,8 +241,7 @@ function mapTradeDetails(tradeOrders: TradeOrder[], executedActions: Array<Recor
       summary: getTradeSummary(actionType, symbol, name, volume, price, amount),
       tool_name: null,
       preview_index: null,
-      status,
-      ok: status !== 'failed',
+      ...tradeStatus,
     }
     })
 }
@@ -271,6 +263,7 @@ function mapRunSummaryToViewModel(summary: RunSummary): AnalysisRunViewModel {
     apiDetails: [],
     rawToolPreviews: [],
     tradeDetails: [],
+    jevAssessments: [],
     output: null,
     summary: summary.analysis_summary || '--',
     detailLoaded: false,
@@ -300,6 +293,7 @@ function mapRunDetailToViewModel(detail: RunDetail): AnalysisRunViewModel {
     apiDetails,
     rawToolPreviews,
     tradeDetails,
+    jevAssessments: Array.isArray(detail.jev_assessments) ? detail.jev_assessments : [],
     output,
     summary: detail.analysis_summary || '--',
     detailLoaded: true,
@@ -336,6 +330,10 @@ export function useAnalysisRuns(options: {
   const renderedOutputLoading = ref(false)
   const todayRuns = ref<AnalysisRunViewModel[]>([])
   const historyRuns = ref<AnalysisRunViewModel[]>([])
+  const historyHasMore = ref(false)
+  const historyLoading = ref(false)
+  const historyCursor = ref<number | null>(null)
+  const historySummaries = ref<RunSummary[]>([])
   const scopeFilter = ref<AnalysisRunScopeFilter>('all')
   const selectedDate = ref('')
   const loading = ref(false)
@@ -347,6 +345,7 @@ export function useAnalysisRuns(options: {
 
   let markdownRendererPromise: Promise<((content: string) => string)> | null = null
   let selectedOutputRenderTicket = 0
+  let historyRequestTicket = 0
 
   const allRuns = computed(() => sourceSummaries.value)
 
@@ -397,8 +396,7 @@ export function useAnalysisRuns(options: {
     todayRuns.value = filterVisibleRuns(todaysSummaries.map(mapRunSummaryToViewModel))
 
     if (selectedDate.value) {
-      const historicalSummaries = sourceSummaries.value.filter((item) => item.started_at.startsWith(selectedDate.value))
-      historyRuns.value = filterVisibleRuns(historicalSummaries.map(mapRunSummaryToViewModel))
+      historyRuns.value = filterVisibleRuns(historySummaries.value.map(mapRunSummaryToViewModel))
     } else {
       historyRuns.value = []
     }
@@ -519,28 +517,64 @@ export function useAnalysisRuns(options: {
   }
 
   async function loadHistoryRuns() {
+    const requestTicket = ++historyRequestTicket
+    const date = selectedDate.value
+    historyCursor.value = null
+    historyHasMore.value = false
+    historySummaries.value = []
+    historyRuns.value = []
     if (!selectedDate.value) {
       historyRuns.value = []
       return
     }
 
     errorMessage.value = ''
+    historyLoading.value = true
 
     try {
       const page = await options.listRunsPage({
         limit: RUNS_PAGE_SIZE,
-        date: selectedDate.value,
+        date,
       })
+      if (requestTicket !== historyRequestTicket || selectedDate.value !== date) return
       const matched = page.items
       sourceSummaries.value = mergeSourceSummaries(sourceSummaries.value, matched)
+      historySummaries.value = matched
+      historyCursor.value = page.next_before_id
+      historyHasMore.value = page.has_more && page.next_before_id !== null
       historyRuns.value = filterVisibleRuns(matched.map(mapRunSummaryToViewModel))
 
       if (selectedDate.value) {
         await syncSelectedRun(historyRuns.value)
       }
     } catch (error) {
+      if (requestTicket !== historyRequestTicket) return
       errorMessage.value = (error as Error).message
       historyRuns.value = []
+    } finally {
+      if (requestTicket === historyRequestTicket) historyLoading.value = false
+    }
+  }
+
+  async function loadMoreHistoryRuns() {
+    const requestTicket = historyRequestTicket
+    const date = selectedDate.value
+    const beforeId = historyCursor.value
+    if (!date || !historyHasMore.value || beforeId === null || historyLoading.value) return
+    historyLoading.value = true
+    errorMessage.value = ''
+    try {
+      const page = await options.listRunsPage({ limit: RUNS_PAGE_SIZE, date, beforeId })
+      if (requestTicket !== historyRequestTicket || selectedDate.value !== date) return
+      historySummaries.value = mergeSourceSummaries(historySummaries.value, page.items)
+      sourceSummaries.value = mergeSourceSummaries(sourceSummaries.value, page.items)
+      historyCursor.value = page.next_before_id
+      historyHasMore.value = page.has_more && page.next_before_id !== null
+      historyRuns.value = filterVisibleRuns(historySummaries.value.map(mapRunSummaryToViewModel))
+    } catch (error) {
+      if (requestTicket === historyRequestTicket) errorMessage.value = (error as Error).message
+    } finally {
+      if (requestTicket === historyRequestTicket) historyLoading.value = false
     }
   }
 
@@ -627,6 +661,8 @@ export function useAnalysisRuns(options: {
     selectedRunLoading,
     todayRuns,
     historyRuns,
+    historyHasMore,
+    historyLoading,
     selectedDate,
     scopeFilter,
     loading,
@@ -639,5 +675,6 @@ export function useAnalysisRuns(options: {
     refreshRunDetail,
     ensureRawToolPreview,
     loadHistoryRuns,
+    loadMoreHistoryRuns,
   }
 }

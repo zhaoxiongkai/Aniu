@@ -36,6 +36,7 @@ from app.skills.providers import build_skill_context
 from app.services.event_bus import event_bus, make_emitter
 from app.services.email_notification_service import email_notification_service
 from app.services.llm_service import LLMStreamCancelled, llm_service
+from app.services.jev_shadow_observer import enqueue_jev_shadow
 from app.services.token_estimator import estimate_messages_tokens, estimate_text_tokens
 from app.services.trading_calendar_service import trading_calendar_service
 from skills.mx_core.client import MXClient
@@ -163,30 +164,39 @@ def _order_status_text(
     order_quantity: Any = None,
     db_status: Any = None,
 ) -> str:
+    text = str(value).strip() if value is not None else ""
+    # status is the vendor's documented order lifecycle. dbStatus is a
+    # different, undocumented raw code and must not use this mapping.
+    mapping = {
+        "1": "未报",
+        "2": "已报",
+        "3": "部分成交",
+        "4": "已成交",
+        "5": "部分成交待撤",
+        "6": "已报待撤",
+        "7": "部分撤单",
+        "8": "已撤单",
+        "9": "废单",
+        "10": "撤单失败",
+    }
     filled = int(_parse_float(filled_quantity) or 0)
     total = int(_parse_float(order_quantity) or 0)
+    if text in {"7", "8"} and filled > 0:
+        return "部分成交后撤单"
+    if text in mapping and text not in {"1", "2"}:
+        return mapping[text]
     if total > 0:
         if filled >= total and filled > 0:
             return "已成交"
         if 0 < filled < total:
             return "部分成交"
-
-    mapping = {
-        "0": "未知",
-        "1": "已报",
-        "2": "已报",
-        "3": "已撤单",
-        "4": "已成交",
-        "8": "未成交",
-        "9": "已撤单",
-        "100": "处理中",
-        "200": "已完成",
-        "206": "已撤单",
-    }
-    text = str(value or "").strip()
-    if text == "" and db_status is not None:
-        text = str(db_status).strip()
-    return mapping.get(text, text or "未知")
+    if text in mapping:
+        return mapping[text]
+    if text:
+        return f"状态码 {text}（待核实）" if text.isdigit() else text
+    if db_status is not None and str(db_status).strip():
+        return f"原始状态 {db_status}（待核实）"
+    return "未知"
 
 
 class AniuService:
@@ -370,6 +380,14 @@ class AniuService:
 
     def update_settings(self, db: Session, payload: AppSettingsUpdate) -> AppSettings:
         instance = self.get_or_create_settings(db)
+        if payload.risk_cash_only and (
+            payload.risk_max_order_value is not None or payload.risk_max_daily_value is not None
+        ):
+            raise RuntimeError("Cash-only mode cannot have monetary limits.")
+        if payload.trade_enabled and not payload.risk_cash_only and (
+            payload.risk_max_order_value is None or payload.risk_max_daily_value is None
+        ):
+            raise RuntimeError("Capped trading requires explicit positive risk limits.")
         sensitive_fields = {"mx_api_key", "llm_api_key"}
         changed_fields: list[str] = []
         for field, value in payload.model_dump().items():
@@ -502,7 +520,10 @@ class AniuService:
         stmt = (
             select(StrategyRun)
             .where(StrategyRun.id == run_id)
-            .options(selectinload(StrategyRun.trade_orders))
+            .options(
+                selectinload(StrategyRun.trade_orders),
+                selectinload(StrategyRun.jev_assessments),
+            )
         )
         run = db.scalar(stmt)
         if run is not None:
@@ -647,6 +668,9 @@ class AniuService:
             self._hydrate_run_display_fields(run)
             for order in run.trade_orders:
                 order.created_at = _assume_utc(order.created_at)
+            for assessment in run.jev_assessments:
+                assessment.created_at = _assume_utc(assessment.created_at)
+                assessment.finished_at = _assume_utc(assessment.finished_at)
 
     def _hydrate_run_summary_metrics(self, run: StrategyRun) -> None:
         token_usage = self._get_run_token_usage(run)
@@ -895,10 +919,35 @@ class AniuService:
         return f"挂单{action_text}{display_symbol}共计{volume}股。"
 
     def _resolve_trade_detail_status(self, raw_status: Any) -> tuple[str, bool | None]:
-        text = str(raw_status or "").strip().lower()
+        text = str(raw_status).strip().lower() if raw_status is not None else ""
+        if text == "9":
+            return "failed", False
         if text and any(flag in text for flag in ("fail", "error", "reject")):
             return "failed", False
-        return "done", True
+        if text in {"filled", "fully_filled", "已成交", "已成", "4"}:
+            return "done", True
+        if text in {"reserved", "submitting"}:
+            return "running", None
+        # An accepted request, ambiguous result, or unknown vendor state is
+        # not evidence of a fill. The order lifecycle must be reconciled.
+        return "done", None
+
+    def _trade_detail_status_text(self, raw_status: Any) -> str:
+        text = str(raw_status).strip().lower() if raw_status is not None else ""
+        if text in {"ambiguous", "unknown"}:
+            return "提交结果未知·需人工核对"
+        if text in {"submitted", "response_received", "accepted"}:
+            return "已提交·成交待核实"
+        if text in {"reserved", "submitting"}:
+            return "提交中"
+        if text in {"1", "2", "3", "4", "5", "6", "7", "8", "9", "10"}:
+            return _order_status_text(text)
+        status, ok = self._resolve_trade_detail_status(raw_status)
+        if ok is True:
+            return "已成交"
+        if ok is False:
+            return "提交失败"
+        return "状态待核实" if status == "done" else "提交中"
 
     def _build_run_trade_details(self, run: StrategyRun) -> list[dict[str, Any]]:
         tool_calls = self._get_detail_tool_calls(run)
@@ -924,6 +973,7 @@ class AniuService:
                         "tool_name": tool_name,
                         "preview_index": self._find_tool_call_index(tool_calls, tool_name, order.symbol),
                         "status": detail_status,
+                        "status_text": self._trade_detail_status_text(order.status),
                         "ok": detail_ok,
                     }
                 )
@@ -958,6 +1008,7 @@ class AniuService:
                     "tool_name": tool_name,
                     "preview_index": self._find_tool_call_index(tool_calls, tool_name, symbol),
                     "status": detail_status,
+                    "status_text": self._trade_detail_status_text(action.get("status")),
                     "ok": detail_ok,
                 }
             )
@@ -1746,6 +1797,8 @@ class AniuService:
             )
             if schedule_id is not None and schedule is None:
                 raise RuntimeError("指定的定时任务不存在。")
+            if schedule is not None and not schedule.enabled:
+                raise RuntimeError("指定的定时任务已关闭，不能手动或自动运行。")
             manual_resolved_run_type, manual_task_prompt = self._resolve_manual_run_profile(
                 settings=settings,
                 manual_run_type=manual_run_type,
@@ -1762,6 +1815,11 @@ class AniuService:
             run_id = run.id
             settings_snapshot = {
                 "id": settings.id,
+                "run_id": run_id,
+                "trade_enabled": bool(getattr(settings, "trade_enabled", False)),
+                "risk_max_order_value": getattr(settings, "risk_max_order_value", None),
+                "risk_max_daily_value": getattr(settings, "risk_max_daily_value", None),
+                "max_actions": getattr(settings, "max_actions", 0),
                 "mx_api_key": settings.mx_api_key,
                 "llm_base_url": settings.llm_base_url,
                 "llm_api_key": settings.llm_api_key,
@@ -1830,6 +1888,8 @@ class AniuService:
             )
 
             settings = SimpleNamespace(**settings_snapshot)
+            if getattr(settings, "run_type", "analysis") == "trade":
+                settings.trade_observer = enqueue_jev_shadow
             mx_client_config = build_skill_context(
                 run_type=getattr(settings, "run_type", "analysis"),
                 app_settings=settings,

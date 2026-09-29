@@ -28,6 +28,7 @@ _QUERY_TEMPLATES: dict[str, list[str]] = {
 
 COMMON_TOOL_NAMES: set[str] = {
     "mx_query_market",
+    "mx_etf_order_preview",
     "mx_search_news",
     "mx_screen_stocks",
     "mx_get_positions",
@@ -109,6 +110,28 @@ TOOL_SPECS: list[MXToolSpec] = [
         category="data",
     ),
     MXToolSpec(
+        name="mx_etf_order_preview",
+        description=(
+            "只读预览历史已在本账户获得妙想委托编号的沪市ETF限价委托。"
+            "核验妙想最新行情、上海基金0.001元价格刻度与最大委托金额；"
+            "不创建委托或授权，实际提交须经过交易网关。"
+        ),
+        parameters={
+            "type": "object",
+            "properties": {
+                "symbol": {"type": "string", "description": "仅支持510050、510300、512100、588000、588170（可带.SH）。"},
+                "quantity": {"type": "integer", "description": "基金份额，必须为100的整数倍。"},
+                "limit_price": {
+                    "type": ["number", "null"],
+                    "description": "可选拟用限价；空值使用经核验的最新价。精确到0.001元。",
+                },
+            },
+            "required": ["symbol", "quantity"],
+            "additionalProperties": False,
+        },
+        category="data",
+    ),
+    MXToolSpec(
         name="mx_search_news",
         description=(
             "基于东方财富妙想搜索能力和金融场景信源智能筛选，查询时效性金融资讯。"
@@ -187,8 +210,8 @@ TOOL_SPECS: list[MXToolSpec] = [
     MXToolSpec(
         name="mx_moni_trade",
         description=(
-            "执行A股模拟交易买入或卖出，仅用于模拟组合练习和策略验证，不涉及真实资金。"
-            "支持市价和限价委托；股票代码必须是6位A股代码，数量必须是100的整数倍。"
+            "执行A股或历史已验证的沪市ETF模拟交易，仅限交易运行且需通过服务端交易开关和风险额度；不涉及真实资金。"
+            "仅支持限价、100股/份整数倍；A股精确到0.01元，ETF精确到0.001元。"
             "适合模拟建仓、减仓、调仓。"
         ),
         parameters={
@@ -201,7 +224,7 @@ TOOL_SPECS: list[MXToolSpec] = [
                 },
                 "symbol": {
                     "type": "string",
-                    "description": "6位A股股票代码，例如 600519、300059。",
+                    "description": "6位A股代码或本账户历史验证的沪市ETF代码，例如588000。",
                 },
                 "name": {
                     "type": "string",
@@ -209,16 +232,16 @@ TOOL_SPECS: list[MXToolSpec] = [
                 },
                 "quantity": {
                     "type": "integer",
-                    "description": "委托数量，必须为100的整数倍，例如100、200、300。",
+                    "description": "股票按股、ETF按份，必须为100的整数倍。",
                 },
                 "price_type": {
                     "type": "string",
-                    "enum": ["MARKET", "LIMIT"],
-                    "description": "委托方式：MARKET 为市价，LIMIT 为限价。",
+                    "enum": ["LIMIT"],
+                    "description": "仅支持限价LIMIT。",
                 },
                 "price": {
                     "type": ["number", "null"],
-                    "description": "限价委托价格；市价时可为空。沪市价格通常不超过2位小数，深市通常不超过3位小数。",
+                    "description": "必填；A股最多2位小数，ETF最多3位小数。",
                 },
                 "reason": {
                     "type": "string",

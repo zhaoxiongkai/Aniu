@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import Any, Callable
 
+from app.services.etf_order_preview import preview_etf_order
+from app.services.order_gateway import submit_order
 from skills.mx_core.client import MXClient
 from skills.mx_core.tool_specs import TOOL_PROFILES, TOOL_SPECS, build_tools
 
@@ -25,6 +27,7 @@ class MXExecutionService:
         self._tool_specs = TOOL_SPECS
         self._handlers: dict[str, Callable[..., dict[str, Any]]] = {
             "mx_query_market": self._handle_query_market,
+            "mx_etf_order_preview": self._handle_etf_order_preview,
             "mx_search_news": self._handle_search_news,
             "mx_screen_stocks": self._handle_screen_stocks,
             "mx_get_positions": self._handle_get_positions,
@@ -76,6 +79,21 @@ class MXExecutionService:
             "ok": True,
             "tool_name": "mx_query_market",
             "summary": f"已查询市场数据：{query}。",
+            "result": result,
+        }
+
+    def _handle_etf_order_preview(
+        self, *, client: MXClient, app_settings: Any, arguments: dict[str, Any]
+    ) -> dict[str, Any]:
+        del app_settings
+        result = preview_etf_order(
+            client, symbol=arguments.get("symbol"), quantity=arguments.get("quantity"),
+            limit_price=arguments.get("limit_price"),
+        )
+        return {
+            "ok": True,
+            "tool_name": "mx_etf_order_preview",
+            "summary": f"已生成{result['symbol']} ETF只读委托预览；本工具不会下单。",
             "result": result,
         }
 
@@ -170,10 +188,9 @@ class MXExecutionService:
     def _handle_moni_trade(
         self, *, client: MXClient, app_settings: Any, arguments: dict[str, Any]
     ) -> dict[str, Any]:
-        del app_settings
         action = str(arguments.get("action") or "").upper()
         symbol = str(arguments.get("symbol") or "").strip()
-        price_type = str(arguments.get("price_type") or "MARKET").upper()
+        price_type = str(arguments.get("price_type") or "LIMIT").upper()
         quantity = int(arguments.get("quantity") or 0)
         price = arguments.get("price")
         reason = str(arguments.get("reason") or "").strip()
@@ -185,9 +202,9 @@ class MXExecutionService:
         if quantity <= 0:
             raise RuntimeError("模拟交易工具的 quantity 必须大于 0。")
         if quantity % 100 != 0:
-            raise RuntimeError("A 股交易数量必须是 100 的整数倍。")
-        if price_type not in {"MARKET", "LIMIT"}:
-            raise RuntimeError("price_type 只能是 MARKET 或 LIMIT。")
+            raise RuntimeError("交易数量必须是 100 股/份的整数倍。")
+        if price_type != "LIMIT":
+            raise RuntimeError("当前只允许限价 LIMIT 委托。")
         if price_type == "LIMIT":
             try:
                 normalized_price = float(price)
@@ -202,7 +219,9 @@ class MXExecutionService:
             except (TypeError, ValueError):
                 price = None
 
-        result = client.trade(
+        result = submit_order(
+            client=client,
+            settings=app_settings,
             action=action,
             symbol=symbol,
             quantity=quantity,
@@ -212,7 +231,7 @@ class MXExecutionService:
         return {
             "ok": True,
             "tool_name": "mx_moni_trade",
-            "summary": f"已提交{action}委托：{symbol} {quantity} 股。",
+            "summary": f"已提交{action}委托：{symbol} {quantity} 股/份。",
             "result": result,
             "executed_action": {
                 "symbol": symbol,

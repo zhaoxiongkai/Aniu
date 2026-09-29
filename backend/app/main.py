@@ -35,10 +35,8 @@ async def app_lifespan(_app: FastAPI):
         skill_admin_service.apply_persisted_state(db)
     current_year = date.today().year
     trading_calendar_service.ensure_years([current_year])
-    try:
-        trading_calendar_service.ensure_years([current_year + 1])
-    except Exception as exc:
-        logger.warning("next-year trading calendar warm up skipped: %s", exc)
+    # Future-year data is fetched on demand by TradingCalendarService._year_days.
+    # A slow or unavailable future calendar must not delay application readiness.
     scheduler_service.start()
     try:
         yield

@@ -31,6 +31,7 @@
             </div>
 
             <div v-if="analysisError" class="error-banner">{{ analysisError }}</div>
+            <div v-if="manualStartError" class="error-banner" role="alert">{{ manualStartError }}</div>
 
             <div class="analysis-scope-tabs" role="tablist" aria-label="分析视图">
               <button
@@ -121,8 +122,17 @@
                    </div>
                 </div>
                 <div v-if="selectedDate && !historyRuns.length" class="run-grid-empty">
-                  该日期没有找到运行记录，请切换日期后重试。
+                  {{ historyLoading ? '正在加载历史记录...' : '该日期没有找到运行记录，请切换日期后重试。' }}
                 </div>
+                <button
+                  v-if="selectedDate && historyHasMore"
+                  type="button"
+                  class="button ghost small soft-header-button"
+                  :disabled="historyLoading"
+                  @click="loadMoreHistoryRuns"
+                >
+                  {{ historyLoading ? '加载中…' : '加载更多历史记录' }}
+                </button>
               </div>
             </div>
           </section>
@@ -211,7 +221,7 @@
 
               <!-- 第三列：交易执行 -->
               <div class="detail-column trade-column">
-                <h4 class="column-title">交易执行 ({{ displayTradeDetails.length }})</h4>
+                <h4 class="column-title">模拟委托 ({{ displayTradeDetails.length }})</h4>
                 <div class="detail-column-body">
                   <div
                     v-if="displayTradeDetails.length"
@@ -229,9 +239,10 @@
                         @click="focusPreview(trade.preview_index)"
                       >
                         <div class="compact-main trade-main">
-                          <span class="trade-text-action" :class="trade.action">{{ trade.action_text }}</span>
+                          <span class="trade-text-action" :class="trade.action">{{ trade.action === 'sell' ? '卖出委托' : '买入委托' }}</span>
                           <span class="trade-text-summary" :title="trade.summary">{{ trade.summary }}</span>
                         </div>
+                        <span class="trade-order-state">{{ getTradeItemStatusText(trade) }}</span>
                         <span class="compact-item-status-dot" :class="getTradeItemStatusClass(trade)" aria-hidden="true"></span>
                       </button>
                     </TransitionGroup>
@@ -280,6 +291,12 @@
               {{ runErrorMessage }}
             </div>
 
+            <JevAuditPanel
+              v-if="!liveVisible && selectedRun?.detailLoaded && (selectedRun.jevAssessments.length || selectedRun.analysisType === '交易任务' || selectedRun.analysisType === 'ETF投资任务')"
+              :assessments="selectedRun.jevAssessments"
+              @refresh="refreshJevAudit"
+            />
+
             <!-- 无数据提示 -->
             <div v-if="!detailGridVisible && !selectedRunLoading" class="empty-state">
               <p>当前没有可展示的运行详情。完成一次任务执行后，这里会显示完整分析结果。</p>
@@ -293,6 +310,7 @@
 import { computed, nextTick, onMounted, onBeforeUnmount, ref, watch } from 'vue'
 
 import { useAnalysisRuns } from '@/composables/useAnalysisRuns'
+import JevAuditPanel from '@/components/tasks/JevAuditPanel.vue'
 import { useRunStream } from '@/composables/useRunStream'
 import { api } from '@/services/api'
 import { useAppStore } from '@/stores/legacy'
@@ -329,6 +347,8 @@ const {
   selectedRunLoading,
   todayRuns,
   historyRuns,
+  historyHasMore,
+  historyLoading,
   selectedDate,
   scopeFilter,
   errorMessage: analysisError,
@@ -340,6 +360,7 @@ const {
   refreshRunDetail,
   ensureRawToolPreview,
   loadHistoryRuns,
+  loadMoreHistoryRuns,
 } = useAnalysisRuns({
   listRunsPage: api.listRunsPage,
   loadRunDetail: store.loadRunDetail,
@@ -360,6 +381,16 @@ onMounted(() => {
 })
 
 const runStream = useRunStream()
+
+async function refreshJevAudit() {
+  const runId = selectedRun.value?.id
+  if (runId === undefined) return
+  try {
+    await refreshRunDetail(runId)
+  } catch (error) {
+    analysisError.value = (error as Error).message || 'Jev 审计刷新失败'
+  }
+}
 const {
   liveActive,
   liveElapsed,
@@ -374,6 +405,7 @@ const {
 } = runStream
 
 const activeManualAction = ref<'analysis' | 'trade' | null>(null)
+const manualStartError = ref('')
 
 const livePlaceholderVisible = computed(() => {
   if (!liveActive.value) return false
@@ -394,15 +426,7 @@ const manualRunTypeText = computed(() => {
   return match?.run_type === 'trade' ? '交易任务' : '分析任务'
 })
 
-const tradeScheduleId = computed(() => {
-  const schedules = store.schedules.filter((item) => item.run_type === 'trade')
-  const match = scopeFilter.value === 'etf'
-    ? schedules.find((item) => item.name.startsWith('ETF'))
-    : schedules.find((item) => !item.name.startsWith('ETF'))
-  return match?.id ?? null
-})
-
-const manualTradeRunTypeText = computed(() => (scopeFilter.value === 'etf' ? 'ETF投资任务' : '交易任务'))
+const manualTradeRunTypeText = computed(() => '交易任务（A 股 / ETF）')
 
 const manualRunButtonTitle = computed(() =>
   preMarketScheduleId.value === null
@@ -410,15 +434,7 @@ const manualRunButtonTitle = computed(() =>
     : '手动执行一次盘前分析',
 )
 
-const manualTradeButtonTitle = computed(() =>
-  tradeScheduleId.value === null
-    ? scopeFilter.value === 'etf'
-      ? '未找到 ETF 投资任务，请先在定时任务页启用 ETF 投资任务'
-      : '未找到交易任务，将使用默认手动交易模板执行'
-    : scopeFilter.value === 'etf'
-      ? '手动执行一次 ETF 投资任务'
-      : '手动执行一次交易任务',
-)
+const manualTradeButtonTitle = computed(() => '手动执行交易任务（支持 A 股与已验证 ETF；不运行已停用的定时任务）')
 
 async function handleScopeFilterChange(scope: typeof analysisScopeOptions[number]['value']) {
   liveFocused.value = false
@@ -437,6 +453,7 @@ async function startManualRun(options: {
   runTypeLabel: string
 }) {
   if (manualRunning.value) return
+  manualStartError.value = ''
   const startedAt = Date.now()
   manualRunning.value = true
   activeManualAction.value = options.action
@@ -451,6 +468,7 @@ async function startManualRun(options: {
     })
   } catch (error) {
     console.error('[TasksView] manual run failed', error)
+    manualStartError.value = (error as Error).message || '启动任务失败，请稍后重试。'
     manualRunning.value = false
     activeManualAction.value = null
     liveFocused.value = false
@@ -466,14 +484,8 @@ async function handleManualRun() {
 }
 
 async function handleManualTrade() {
-  if (scopeFilter.value === 'etf' && tradeScheduleId.value === null) {
-    window.alert('未找到 ETF 投资任务，请先在定时任务页启用 ETF 投资任务。')
-    return
-  }
-
   await startManualRun({
-    scheduleId: tradeScheduleId.value ?? undefined,
-    runType: tradeScheduleId.value == null ? 'trade' : undefined,
+    runType: 'trade',
     action: 'trade',
     runTypeLabel: manualTradeRunTypeText.value,
   })
@@ -721,13 +733,20 @@ function getApiItemStatusClass(api: ApiDetail) {
 }
 
 function getTradeItemStatusClass(trade: TradeDetail) {
-  if (trade.status === 'running') {
-    return 'is-running'
-  }
   if (trade.status === 'failed' || trade.ok === false) {
     return 'is-failed'
   }
-  return 'is-success'
+  if (trade.status === 'running') {
+    return 'is-running'
+  }
+  return trade.ok === true ? 'is-success' : 'is-pending'
+}
+
+function getTradeItemStatusText(trade: TradeDetail) {
+  if (trade.status_text?.trim()) return trade.status_text
+  if (trade.status === 'failed' || trade.ok === false) return '提交失败'
+  if (trade.status === 'running') return '提交中'
+  return trade.ok === true ? '已成交' : '状态待核实'
 }
 
 function getTradeItemKey(trade: TradeDetail, idx: number) {
@@ -1026,6 +1045,13 @@ onBeforeUnmount(() => {
 </script>
 
 <style scoped>
+.trade-order-state {
+  flex: 0 0 auto;
+  color: #a9c7e8;
+  font-size: 9px;
+  white-space: nowrap;
+}
+
 .manual-trade-button {
   margin-left: 5px;
 }
@@ -1148,6 +1174,11 @@ onBeforeUnmount(() => {
 .compact-item-status-dot.is-failed {
   background: rgba(248, 113, 113, 0.96);
   box-shadow: 0 0 8px rgba(248, 113, 113, 0.42);
+}
+
+.compact-item-status-dot.is-pending {
+  background: rgba(251, 191, 36, 0.96);
+  box-shadow: 0 0 8px rgba(251, 191, 36, 0.42);
 }
 
 .trade-text-summary {

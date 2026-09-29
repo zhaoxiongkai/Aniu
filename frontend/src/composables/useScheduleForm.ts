@@ -76,7 +76,6 @@ const TRADE_SESSION_TASK_NAMES = {
 } as const
 
 const DEFAULT_TIMEOUT = 1800
-const ETF_INVESTMENT_LIMIT = 1000
 
 function normalizeSectionTime(section: ScheduleKey, hour: number, minute: number) {
   const options = FIXED_TASK_TIME_OPTIONS[section]
@@ -115,8 +114,8 @@ const defaultState = (): ScheduleFormState => ({
   midday: { enabled: false, hour: 12, minute: 0, prompt: '你正在执行午间复盘任务，请对上午市场和交易操作进行复盘，做好下午市场走势预测，为你决策交易做好准备。' },
   morning: { enabled: true, runCount: 2, prompt: '你正在执行盘中交易操作，你的唯一目标是追求收益最大化。' },
   afternoon: { enabled: true, runCount: 2, prompt: '你正在执行盘中交易操作，你的唯一目标是追求收益最大化。' },
-  etfMorning: { enabled: false, runCount: 2, prompt: `你正在执行ETF投资任务。仅围绕ETF标的进行判断和模拟交易，优先控制回撤与仓位纪律；单次ETF可投资金额上限${ETF_INVESTMENT_LIMIT}元，该金额为系统固定上限，不需要从API获取。` },
-  etfAfternoon: { enabled: false, runCount: 2, prompt: `你正在执行ETF投资任务。仅围绕ETF标的进行判断和模拟交易，优先控制回撤与仓位纪律；单次ETF可投资金额上限${ETF_INVESTMENT_LIMIT}元，该金额为系统固定上限，不需要从API获取。` },
+  etfMorning: { enabled: false, runCount: 2, prompt: '你正在执行ETF投资任务。仅围绕已验证支持的ETF标的进行判断和模拟交易，优先控制回撤与仓位纪律；买入不得超过可用资金，卖出不得超过可卖持仓，不设单次或单日固定金额上限，实际委托须通过交易网关校验。' },
+  etfAfternoon: { enabled: false, runCount: 2, prompt: '你正在执行ETF投资任务。仅围绕已验证支持的ETF标的进行判断和模拟交易，优先控制回撤与仓位纪律；买入不得超过可用资金，卖出不得超过可卖持仓，不设单次或单日固定金额上限，实际委托须通过交易网关校验。' },
 })
 
 function parseCron(cronExpression: string) {

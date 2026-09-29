@@ -98,7 +98,9 @@ class SkillPolicy:
         }
         ordered = [name for name in _PREFERRED_RUNTIME_TOOL_ORDER if name in tool_names]
         extras = sorted(tool_names - set(ordered))
-        return ordered + extras
+        from app.skills.runtime import _tool_allowed
+
+        return [name for name in ordered + extras if _tool_allowed(name, normalized)]
 
     def skill_mode_label(self, pkg: SkillPackage, *, run_type: str) -> str:
         if pkg.skill is not None:

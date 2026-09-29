@@ -27,6 +27,7 @@ interface ScheduleOverviewItem {
 }
 
 type SettingsPayload = Omit<AppSettings, 'id' | 'created_at' | 'updated_at'>
+type SavedTradePolicy = Pick<AppSettings, 'trade_enabled' | 'risk_cash_only' | 'risk_max_order_value' | 'risk_max_daily_value'>
 type ScheduleEditor = Omit<ScheduleConfig, 'created_at' | 'updated_at'> & { local_id: string }
 
 const defaultSettings = (): SettingsPayload => ({
@@ -36,6 +37,10 @@ const defaultSettings = (): SettingsPayload => ({
   llm_api_key: '',
   llm_model: 'gpt-4o-mini',
   automation_context_window_tokens: 128000,
+  trade_enabled: false,
+  risk_cash_only: false,
+  risk_max_order_value: null,
+  risk_max_daily_value: null,
   system_prompt: '你是跨越完整牛熊周期的顶尖私募投资机构老将与极度理性的专业交易员，你深谙A股政策驱动、外资流动与资金博弈机制。你必须持续运行以下自我驱动循环，监控经济、政策、盘面数据及资金流向，研判周期位置与市场情绪，寻找共识与预期差，定性博弈逻辑，自主决策执行交易操作。你的唯一目标是追求收益最大化。',
 })
 
@@ -156,6 +161,7 @@ function getScheduleCategory(item: Pick<ScheduleConfig, 'name' | 'run_type'>) {
 
 export const useAppStore = defineStore('app', () => {
   const settings = reactive<SettingsPayload>(defaultSettings())
+  const savedTradePolicy = ref<SavedTradePolicy | null>(null)
   const schedules = ref<ScheduleEditor[]>([])
   const account = ref<AccountOverview>(defaultAccount())
   const runtimeOverview = ref<RuntimeOverview>(defaultRuntimeOverview())
@@ -220,6 +226,16 @@ export const useAppStore = defineStore('app', () => {
     settings.llm_api_key = payload.llm_api_key ?? ''
     settings.llm_model = payload.llm_model
     settings.automation_context_window_tokens = payload.automation_context_window_tokens ?? 128000
+    settings.trade_enabled = payload.trade_enabled === true
+    settings.risk_cash_only = payload.risk_cash_only === true
+    settings.risk_max_order_value = payload.risk_max_order_value ?? null
+    settings.risk_max_daily_value = payload.risk_max_daily_value ?? null
+    savedTradePolicy.value = {
+      trade_enabled: payload.trade_enabled === true,
+      risk_cash_only: payload.risk_cash_only === true,
+      risk_max_order_value: payload.risk_max_order_value ?? null,
+      risk_max_daily_value: payload.risk_max_daily_value ?? null,
+    }
     settings.system_prompt = payload.system_prompt
   }
 
@@ -319,6 +335,7 @@ export const useAppStore = defineStore('app', () => {
 
   function resetState() {
     Object.assign(settings, defaultSettings())
+    savedTradePolicy.value = null
     schedules.value = []
     account.value = defaultAccount()
     runtimeOverview.value = defaultRuntimeOverview()
@@ -336,8 +353,18 @@ export const useAppStore = defineStore('app', () => {
     errorMessage.value = ''
 
     try {
+      const maxOrder = Number(settings.risk_max_order_value)
+      const maxDaily = Number(settings.risk_max_daily_value)
+      const riskMaxOrderValue = !settings.risk_cash_only && Number.isFinite(maxOrder) && maxOrder > 0 ? maxOrder : null
+      const riskMaxDailyValue = !settings.risk_cash_only && Number.isFinite(maxDaily) && maxDaily > 0 ? maxDaily : null
+      if (settings.trade_enabled && !settings.risk_cash_only && (riskMaxOrderValue === null || riskMaxDailyValue === null)) {
+        throw new Error('金额限额模式下，启用交易前必须填写两个大于 0 的风控限额。')
+      }
       const payload = await api.updateSettings({
         ...settings,
+        risk_cash_only: settings.risk_cash_only,
+        risk_max_order_value: riskMaxOrderValue,
+        risk_max_daily_value: riskMaxDailyValue,
         mx_api_key: settings.mx_api_key || null,
         llm_base_url: settings.llm_base_url || null,
         llm_api_key: settings.llm_api_key || null,
@@ -392,6 +419,7 @@ export const useAppStore = defineStore('app', () => {
 
   return {
     settings,
+    savedTradePolicy,
     schedules,
     account,
     busy,
